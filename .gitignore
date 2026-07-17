@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Deep Learning / Model Weights
+*.pt
+*.pth
+*.h5
+# Let's keep .tflite since they are usually small and needed for Mobile/Frontend apps
+# *.tflite 
+
+# Datasets and runs
+Research_and_Data/Dataset/
+Cloud_server/Trainer/runs/
+YOLOv8/
+
+# IDEs and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
