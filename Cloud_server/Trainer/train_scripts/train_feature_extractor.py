@@ -124,26 +124,42 @@ def main():
     # BỘ LƯU TRỌNG SỐ ĐỊNH KỲ VÀ LIÊN TỤC
     checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint_epoch_{epoch:02d}.h5')
     
-    save_period_gate = ModelCheckpoint(
-        filepath=checkpoint_path,
-        save_freq='epoch',
-        period=5,
-        save_weights_only=False,
-        verbose=1
+    # BỘ LƯU TRỌNG SỐ ĐỊNH KỲ VÀ GHI TIẾN TRÌNH TỰ VIẾT (VÁ LỖI KERAS)
+    class SmartProgressCallback(tf.keras.callbacks.Callback):
+        def __init__(self, last_file, epoch_file, checkpoint_fmt, period=5):
+            super().__init__()
+            self.last_file = last_file
+            self.epoch_file = epoch_file
+            self.checkpoint_fmt = checkpoint_fmt
+            self.period = period
+
+        def on_epoch_end(self, epoch, logs=None):
+            current_epoch = epoch + 1
+            
+            # 1. Luôn ghi nhận số Epoch hiện tại vào file txt để khôi phục (Resume)
+            with open(self.epoch_file, 'w') as f:
+                f.write(str(current_epoch))
+            
+            # 2. Thay thế hoàn toàn lệnh period=5 cũ bằng toán tử chia lấy dư chuẩn xác
+            if current_epoch % self.period == 0:
+                epoch_path = self.checkpoint_fmt.format(epoch=current_epoch)
+                self.model.save(epoch_path)
+                print(f"\n💾 [CHECKPOINT] Đã lưu mô hình định kỳ tại Epoch {current_epoch} -> {epoch_path}")
+
+    # Khởi tạo bộ gác cổng thông minh mới thay thế cho 2 callback cũ
+    progress_manager_gate = SmartProgressCallback(
+        last_file=last_model_file,
+        epoch_file=last_epoch_file,
+        checkpoint_fmt=checkpoint_path,
+        period=5 # Kích hoạt lưu mỗi 5 epoch cực kỳ an toàn
     )
     
+    # Bộ lưu đè liên tục phục vụ tính năng Resume
     last_checkpoint_gate = ModelCheckpoint(
         filepath=last_model_file,
         save_best_only=False,
         verbose=0
     )
-
-    class SaveEpochCallback(tf.keras.callbacks.Callback):
-        def on_epoch_end(self, epoch, logs=None):
-            with open(last_epoch_file, 'w') as f:
-                f.write(str(epoch + 1))
-                
-    epoch_saver = SaveEpochCallback()
 
     print(f"-> Trạng thái lò: LR=0.001 | Patience=5 | Save Period=5 | Đang tiến hành fit...")
     
@@ -154,7 +170,7 @@ def main():
         validation_data=val_generator,
         steps_per_epoch=len(train_generator),
         validation_steps=len(val_generator),
-        callbacks=[early_stopping_gate, save_period_gate, last_checkpoint_gate, epoch_saver],
+        callbacks=[early_stopping_gate, last_checkpoint_gate, progress_manager_gate], # Đã làm sạch đường ống
         verbose=1
     )
 

@@ -51,3 +51,20 @@ Nhận thấy việc sinh ra các file lưu định kỳ (`save_period`) có th�
 
 > ***** LƯU Ý QUAN TRỌNG DÀNH CHO BẠN *****
 > Tuy nhiên, có một lưu ý nhỏ: Tiến trình YOLO mà bạn đang chạy hiện tại là do đoạn code "cũ" khởi động. Nên khi nó chạy xong đợt này, nó sẽ chưa biết cách tự dọn rác đâu. Lần này bạn sẽ chịu khó vào thư mục `runs/yolo_hands/weights/` xóa bằng tay các file `epoch*.pt` giúp tôi nhé.
+
+## 6. Sửa Lỗi Tương Thích Keras & Nâng Cấp Kiến Trúc GRU (Chống Học Vẹt & Bứt Phá Accuracy)
+- **Vá lỗi tham số `period` của ModelCheckpoint**: TensorFlow/Keras thế hệ mới (v2.16+) đã khai tử tham số `period`, gây ra lỗi sập toàn bộ tiến trình train (ở `train_gru.py` và `train_feature_extractor.py`).
+  - **Giải pháp**: Xây dựng cơ chế lai (Hybrid OOP) thông qua lớp `SmartProgressCallback`. Giao phó việc lưu đè liên tục cho Keras, và tự tính toán chu kỳ `% 5 == 0` để gánh vác việc lưu định kỳ. Điều này vừa giữ được sức mạnh lõi của Keras vừa đảm bảo độc lập, không sợ lỗi phiên bản.
+- **Nâng cấp Kiến trúc GRU "Đô Con" (Giải pháp cho Dataset nhỏ)**: 
+  - **Vấn đề**: Code cũ với dung lượng mạng hẹp (chỉ Dense 64 -> 128) đã bóp nghẹt không gian đặc trưng (Feature Space) ngay từ đầu khi lượng video cung cấp quá mỏng (~7 video mẫu/class). Điều này khiến mạng bị kẹt Loss ở giai đoạn sớm (chỉ đạt ~2% val_accuracy).
+  - **Giải pháp Đột phá**: 
+    1. **Mở rộng không gian đệm**: Nâng lớp Dense đệm lên 256 chiều để AI có không gian thở và thoải mái thu thập đặc trưng.
+    2. **Rút gọn mạng hồi quy**: Giảm từ 2 tầng Bidirectional xuống còn 1 tầng `Bidirectional(GRU(128))` vừa đủ mạnh để nhớ tiến trình thời gian mà không bị "loãng" do chồng chất quá nhiều.
+    3. **Tăng Dropout và phạt L2**: Bổ sung `Dropout(0.5)` và dùng `kernel_regularizer=l2(0.0001)` ở các tầng Dense để triệt tiêu dữ liệu bẩn và ép nơ-ron phải học thật (chống học vẹt tuyệt đối).
+    4. **Tăng "độ lì đòn" cho thuật toán giảm ga**: Đặt lại `patience=8` trong `ReduceLROnPlateau` thay vì 3, kết hợp nâng `epochs=100` và `early_stopping_patience=15`. Ép mô hình kiên nhẫn vượt qua các đợt trồi sụt của tập Validation (do thiếu data) thay vì hoảng loạn hãm tốc độ học quá sớm.
+- **Quy trình Thu gọn Từ vựng (Từ 300 xuống 100 lớp)**:
+  - Do lượng video chia cho 300 lớp quá mỏng, cấu hình tại `config.py` đã được chỉnh xuống file `nslt_100.json` (100 từ vựng) để tăng số lượng video/lớp.
+  - **Quy trình bắt buộc**: 
+    - Phải xóa tàn dư của 300 lớp ở `Dataset/Sequences/processed/` để không bị trộn lẫn từ vựng cũ.
+    - Xóa trí nhớ/checkpoint cũ ở `Trainer/runs/gru_checkpoints/` để tránh việc AI bị loạn nhãn đầu ra. 
+    - Chạy lại file `Data_preparation/Prepare_sequences.py` để trích xuất 100 từ vựng, đóng gói thành ma trận mới hoàn toàn trước khi train GRU.

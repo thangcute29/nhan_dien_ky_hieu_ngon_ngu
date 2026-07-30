@@ -1,0 +1,25 @@
+{
+    "gender": {
+        "female": 0,
+        "male": 1
+    },
+    "skinColor": {
+        "dark": 0,
+        "fair": 1,
+        "medium": 2
+    },
+    "accessories": {
+        "0": 0,
+        "1": 1
+    },
+    "nailPolish": {
+        "0": 0,
+        "1": 1
+    },
+    "aspectOfHand": {
+        "dorsal left": 0,
+        "dorsal right": 1,
+        "palmar left": 2,
+        "palmar right": 3
+    }
+}

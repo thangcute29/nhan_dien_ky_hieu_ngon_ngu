@@ -32,9 +32,9 @@ FEATURES_RAW_DIR = os.path.join(FEATURES_DIR, FEATURES_RAW_SUBDIR)
 # ----------------- SEQUENCES -----------------
 SEQUENCES_DIR = os.path.join(RESEARCH_DATA_DIR, 'Sequences')
 # Dữ liệu WLASL: file JSON chính (nslt_300.json)
-SEQUENCES_JSON = os.path.join(SEQUENCES_DIR, 'nslt_300.json')
-# Dữ liệu CSV (nếu có) – script sẽ ưu tiên JSON nếu SEQUENCES_CSV kết thúc bằng .json
-SEQUENCES_CSV = SEQUENCES_JSON   # script sẽ kiểm tra đuôi .json để kích hoạt luồng WLASL
+SEQUENCES_JSON = os.path.join(SEQUENCES_DIR, 'nslt_100.json')
+# Dữ liệu CSV (nếu có) – khai báo tường minh
+SEQUENCES_CSV = os.path.join(SEQUENCES_DIR, 'hand_gestures.csv')   # Khai báo file CSV bổ sung
 # Thư mục chứa video gốc (các file .mp4 với tên {video_id}.mp4)
 SEQUENCES_VIDEOS_DIR = os.path.join(SEQUENCES_DIR, 'videos')
 # Thư mục gốc để quét cấu trúc train/val có sẵn (nếu có)

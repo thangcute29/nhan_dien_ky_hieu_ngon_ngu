@@ -116,6 +116,9 @@ class SignLanguageApp:
             # Gửi frame ra camera ảo
             self.virtual_cam.send_frame(display)
 
+            # BẬT CỬA SỔ HIỂN THỊ ĐỂ BẮT SỰ KIỆN PHÍM 'q' KHI TEST
+            cv2.imshow("Sign Language App", display)
+
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 break

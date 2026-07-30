@@ -12,7 +12,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import config
 
 def extract_keypoints(video_path, hands, seq_len=30):
-    """Trích xuất chuỗi keypoints từ video."""
+    """Trích xuất chuỗi keypoints từ video — 2 tay, phân biệt trái/phải."""
+    NUM_POINTS = 21 * 3             # 63 số/tay
+    TOTAL_FEATURES = NUM_POINTS * 2  # 126 số = 2 tay
+    
     cap = cv2.VideoCapture(video_path)
     kp_seq = []
     while cap.isOpened():
@@ -21,14 +24,25 @@ def extract_keypoints(video_path, hands, seq_len=30):
             break
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(frame_rgb)
-        if results.multi_hand_landmarks:
-            hand = results.multi_hand_landmarks[0]
-            kp = []
-            for lm in hand.landmark:
-                kp.extend([lm.x, lm.y, lm.z])
-            kp_seq.append(kp)
-        else:
-            kp_seq.append([0.0] * 63)
+        
+        # Tạo vector 126 số: [tay_trái (63) | tay_phải (63)], mặc định = 0
+        kp = [0.0] * TOTAL_FEATURES
+        
+        if results.multi_hand_landmarks and results.multi_handedness:
+            for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                # Đọc nhãn trái/phải từ MediaPipe
+                label = results.multi_handedness[idx].classification[0].label
+                
+                # "Left" → vị trí 0-62 (63 số đầu)
+                # "Right" → vị trí 63-125 (63 số sau)
+                offset = 0 if label == "Left" else NUM_POINTS
+                
+                for j, lm in enumerate(hand_landmarks.landmark):
+                    kp[offset + j * 3]     = lm.x
+                    kp[offset + j * 3 + 1] = lm.y
+                    kp[offset + j * 3 + 2] = lm.z
+        
+        kp_seq.append(kp)
     cap.release()
     
     if len(kp_seq) == 0:
@@ -38,7 +52,7 @@ def extract_keypoints(video_path, hands, seq_len=30):
     if len(seq) >= seq_len:
         return seq[:seq_len]
     else:
-        pad = np.zeros((seq_len - len(seq), 63), dtype=np.float32)
+        pad = np.zeros((seq_len - len(seq), TOTAL_FEATURES), dtype=np.float32)
         return np.vstack([seq, pad])
 
 #=========XỬ LÝ DỮ LIỆU NGOÀI DANH SÁCH WLASL (CSV)=========
@@ -88,8 +102,8 @@ def process_from_wlasl_json(json_path, videos_dir, hands, seq_len, output_base):
 
     print(f"📂 Đang xử lý dữ liệu từ: {os.path.basename(json_path)}")
 
-    # Gom tất cả video hợp lệ (có file tồn tại) và nhãn
-    all_data = []   # Mỗi phần tử là (video_id, video_path, label)
+    train_data = []
+    val_data = []
     missing = 0
 
     for video_id, info in tqdm(data.items(), desc="Thu thập video WLASL"):
@@ -111,21 +125,18 @@ def process_from_wlasl_json(json_path, videos_dir, hands, seq_len, output_base):
             missing += 1
             continue
 
-        all_data.append((video_id, video_path, label))
+        if subset == 'train':
+            train_data.append((video_id, video_path, label))
+        else: # Gộp 'val' và 'test' thành tập val chung
+            val_data.append((video_id, video_path, label))
 
-    print(f"🔍 Tìm thấy {len(all_data)} video hợp lệ (bỏ qua {missing} video bị thiếu).")
+    print(f"🔍 Tìm thấy {len(train_data) + len(val_data)} video hợp lệ (bỏ qua {missing} video bị thiếu).")
 
-    if len(all_data) == 0:
+    if len(train_data) + len(val_data) == 0:
         print("❌ Không có video nào để xử lý.")
         return processed
 
-    # Chia train/val 80/20, giữ phân bố lớp (stratify)
-    labels = [lbl for (_, _, lbl) in all_data]
-    train_data, val_data = train_test_split(
-        all_data, train_size=0.8, random_state=42, stratify=labels
-    )
-
-    print(f"✂️ Tự chia: Train = {len(train_data)} video, Val = {len(val_data)} video.")
+    print(f"✂️ Phân loại theo JSON gốc: Train = {len(train_data)} video, Val = {len(val_data)} video.")
 
     # Hàm con xử lý từng tập
     def process_split(video_list, split_name):
@@ -152,7 +163,7 @@ def main():
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
         static_image_mode=False,
-        max_num_hands=1,
+        max_num_hands=2,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5
     )
@@ -162,8 +173,8 @@ def main():
     processed_ids = set()
    
     # --- 1. XỬ LÝ NGUỒN JSON (WLASL) ---
-    json_path = config.SEQUENCES_CSV if config.SEQUENCES_CSV.endswith('.json') else None
-    if json_path:
+    json_path = config.SEQUENCES_JSON
+    if json_path and os.path.exists(json_path):
         new_ids = process_from_wlasl_json(json_path, config.SEQUENCES_VIDEOS_DIR, hands, SEQ_LEN, output_dir)
         processed_ids.update(new_ids)
         print(f"✅ Đã xử lý {len(new_ids)} video từ JSON. (Tổng: {len(processed_ids)})")
@@ -171,29 +182,54 @@ def main():
         print("ℹ️ Không có file JSON được cấu hình, bỏ qua WLASL.")
 
     # --- 2. XỬ LÝ NGUỒN CSV (Dữ liệu bổ sung) ---
-    csv_path = config.SEQUENCES_CSV.replace('.json', '.csv') if json_path else config.SEQUENCES_CSV
-    if os.path.exists(csv_path) and csv_path.endswith('.csv'):
+    csv_path = config.SEQUENCES_CSV
+    if csv_path and os.path.exists(csv_path) and csv_path.endswith('.csv'):
+        print(f"📂 Xử lý video mới từ CSV: {os.path.basename(csv_path)}...")
         df = pd.read_csv(csv_path)
-        df['vid_id'] = df['video_name'].apply(lambda x: os.path.splitext(str(x))[0])
-        df_new = df[~df['vid_id'].isin(processed_ids)]
         
-        if not df_new.empty:
-            print(f"📂 Xử lý {len(df_new)} video mới từ CSV...")
-            train_v, val_v, train_l, val_l = train_test_split(
-                df_new['video_name'].tolist(), df_new['label'].tolist(), 
-                train_size=0.8, random_state=42
-            )
-            for v_list, l_list, split in [(train_v, train_l, 'train'), (val_v, val_l, 'val')]:
-                for vid, lbl in tqdm(zip(v_list, l_list), total=len(v_list), desc=f"CSV {split}"):
-                    v_path = os.path.join(config.SEQUENCES_VIDEOS_DIR, vid)
-                    if not os.path.exists(v_path):
-                        continue
+        labels_in_csv = [col for col in df.columns if col != 'set_id']
+        csv_data = []
+        
+        for index, row in df.iterrows():
+            group_id = row['set_id']
+            for label in labels_in_csv:
+                video_rel_path = row[label]
+                if pd.isna(video_rel_path): continue
+                
+                vid_id = f"{group_id}_{os.path.splitext(os.path.basename(str(video_rel_path)))[0]}"
+                if vid_id in processed_ids:
+                    continue
+                
+                v_path = os.path.join(config.SEQUENCES_DIR, str(video_rel_path))
+                if os.path.exists(v_path):
+                    csv_data.append((vid_id, v_path, label, group_id))
+        
+        if csv_data:
+            from sklearn.model_selection import GroupShuffleSplit
+            
+            paths = [item[1] for item in csv_data]
+            lbls = [item[2] for item in csv_data]
+            groups = [item[3] for item in csv_data]
+            
+            gss = GroupShuffleSplit(n_splits=1, train_size=0.8, random_state=42)
+            train_idx, val_idx = next(gss.split(paths, lbls, groups))
+            
+            train_csv = [csv_data[i] for i in train_idx]
+            val_csv = [csv_data[i] for i in val_idx]
+            
+            print(f"✂️ CSV chia theo Group (set_id): Train = {len(train_csv)}, Val = {len(val_csv)}")
+            
+            def process_csv_list(v_list, split_name):
+                for (vid_id, v_path, lbl, _) in tqdm(v_list, desc=f"CSV {split_name}"):
                     seq = extract_keypoints(v_path, hands, SEQ_LEN)
                     if seq is not None:
-                        d_dir = os.path.join(output_dir, split, str(lbl))
+                        d_dir = os.path.join(output_dir, split_name, str(lbl))
                         os.makedirs(d_dir, exist_ok=True)
-                        np.save(os.path.join(d_dir, f"{os.path.splitext(vid)[0]}.npy"), seq)
-                        processed_ids.add(os.path.splitext(vid)[0])
+                        np.save(os.path.join(d_dir, f"{vid_id}.npy"), seq)
+                        processed_ids.add(vid_id)
+            
+            process_csv_list(train_csv, 'train')
+            process_csv_list(val_csv, 'val')
             print(f"✅ Đã xử lý thêm video từ CSV. (Tổng: {len(processed_ids)})")
 
     # --- 3. QUÉT THƯ MỤC CÓ SẴN (Vét dữ liệu còn sót) ---
