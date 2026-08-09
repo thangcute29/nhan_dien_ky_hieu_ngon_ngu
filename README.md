@@ -154,7 +154,18 @@ python Cloud_server/Trainer/train_scripts/train_classification.py
 
 ---
 
+### 9. Nâng Cấp Bộ Điều Phối Dữ Liệu Thông Minh 100% (Universal Dynamic Data Adapters)
+* 🎯 **Mục đích:** Loại bỏ 100% đường dẫn gán cứng trong `config.py` và tự động nhận diện dữ liệu chuẩn bị trong cả 4 file `Prepare_*.py`.
+* 💎 **Chi tiết nâng cấp 4 File Chuẩn bị dữ liệu:**
+  1. **`Prepare_detection.py`:** Tự động phát hiện dataset Roboflow/YOLO, gộp `test` sang `valid` chuẩn 80/20 và ép Single-Class `hand` (`nc: 1`).
+  2. **`Prepare_classification.py`:** Tự động nhận diện dữ liệu thuộc tính đã gộp, tránh ghi đè làm hỏng file `train.csv` / `val.csv`.
+  3. **`prepare_features.py`:** Tự động quét folder lớp ảnh ký hiệu tĩnh `train/` và `val/`.
+  4. **`Prepare_sequences.py`:** Tự động quét động bằng `os.walk` trích xuất keypoints từ kho Video Mẫu Gia sư AI (`custom_enrollment`) và nạp bổ sung vào mảng NumPy `.npy`.
+
+---
+
 *💡 **Mẹo nhỏ:** Để tránh bị lỗi đường dẫn hoặc lỗi môi trường, hãy luôn ưu tiên copy-paste dòng lệnh từ phần "BẢNG TỔNG HỢP CÁC CÂU LỆNH CHẠY" ở trên thay vì bấm nút Run (Play) trên các phần mềm như VS Code.*
+
 
 
 

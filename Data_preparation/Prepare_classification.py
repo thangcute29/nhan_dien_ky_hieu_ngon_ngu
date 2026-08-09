@@ -15,8 +15,16 @@ def main():
     os.makedirs(config.CLASSIFICATION_DIR, exist_ok=True)
     os.makedirs(config.CLASSIFICATION_IMAGES_DIR, exist_ok=True)
     
-    # 1. Đọc CSV nguồn (lấy từ dữ liệu gốc bên Detection)
-    source_csv = config.DETECTION_CSV
+    # KỊCH BẢN A: Đã có sẵn tập Classification train.csv và val.csv
+    if os.path.exists(config.CLASSIFICATION_TRAIN_CSV) and os.path.exists(config.CLASSIFICATION_VAL_CSV):
+        train_df_exist = pd.read_csv(config.CLASSIFICATION_TRAIN_CSV)
+        val_df_exist = pd.read_csv(config.CLASSIFICATION_VAL_CSV)
+        print(f"🟢 [ADAPTER] Đã phát hiện dữ liệu Classification có sẵn! Train: {len(train_df_exist)} dòng | Val: {len(val_df_exist)} dòng.")
+        print("✅ DỮ LIỆU CLASSIFICATION ĐÃ SẴN SÀNG TRAIN!")
+        return
+
+    # KỊCH BẢN B: Tạo từ dữ liệu thô cũ
+    source_csv = getattr(config, 'DETECTION_CSV', os.path.join(config.RESEARCH_DATA_DIR, 'Classification', 'Old_Detection_Data', 'HandInfo.csv'))
     if not os.path.exists(source_csv):
         print(f"Lỗi: Không tìm thấy file CSV nguồn tại {source_csv}")
         return

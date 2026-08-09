@@ -837,9 +837,23 @@ cv2.putText(display, f"NGON NGU: {lang_str}", (15, 33), cv2.FONT_HERSHEY_SIMPLEX
 
 ### 📍 Các Module Độc Lập Đã Triển Khai
 1. **`Tools/video_translator.py`:** Module chuyên trách đọc, cắt frame và dịch thuật tệp video MP4/AVI.
-2. **`Tools/ai_tutor_engine.py`:** Module Gia sư AI Chấm điểm & Người Ảo AI Trợ Lý:
-   - Tự động nạp bổ sung Video Mẫu mới vào Dataset `custom_enrollment`.
-   - Render Người Ảo AI Trợ Lý (AI Avatar Robot Head) ở góc phải camera, hiển thị bong bóng hội thoại chỉ vị trí sai và phát đọc âm thanh nhắc nhở qua TTS.
+---
+
+## 🔴 Lỗi 27: Loại Bỏ Đường Dẫn Gán Cứng & Tinh Gọn `config.py` Chuẩn Universal Dynamic Data Adapters
+
+> **Ngày thực hiện:** 10/08/2026  
+> **File liên quan:** `config.py`, `Data_preparation/Prepare_*.py`, `README.md`  
+> **Tác giả:** Pair Programming cùng AI Assistant Antigravity  
+
+### 📍 Các cải tiến kỹ thuật
+1. **Loại bỏ 100% đường dẫn gán cứng trong `config.py`:**
+   - Tinh gọn khu vực `SEQUENCES` về 3 dòng định danh chuẩn: `SEQUENCES_DIR`, `SEQUENCES_PROCESSED_DIR`, `SEQUENCES_CUSTOM_DIR`.
+   - Chuẩn hóa khu vực `DETECTION` theo chuẩn YOLOv8 (`DETECTION_YAML`, `DETECTION_TRAIN_DIR`, `DETECTION_VAL_DIR`).
+   - Thêm bộ quét động cho `FEATURES_RAW_DIR`.
+2. **Nâng cấp 4 Script `Prepare_*.py`:**
+   - Tự động nhận diện dữ liệu đã gán nhãn chuẩn/đã chia 80/20 mà không cần chạy lại các bước nặng.
+   - `Prepare_sequences.py` dùng `os.walk` quét động toàn bộ video thô và video mẫu nạp mới (`custom_enrollment`) để trích xuất 126 keypoints tự động.
+
 
 
 

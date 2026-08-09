@@ -24,16 +24,22 @@ def copy_images_from_dir(src_dir, dst_dir, class_name):
 def main():
     print("=== Chuẩn bị dữ liệu Features (Ảnh ký hiệu tĩnh) ===")
     
-    # Đường dẫn gốc tới dữ liệu (nơi chứa files/ hoặc train/ val/)
-    source_dir = os.path.join(config.FEATURES_DIR, 'asl-alphabet-train')  # Thay đổi nếu cần
+    source_dir = config.FEATURES_RAW_DIR
     train_output = os.path.join(config.FEATURES_DIR, 'train')
     val_output = os.path.join(config.FEATURES_DIR, 'val')
 
-    # 1. Dọn dẹp thư mục đầu ra cũ (nếu có)
-    if os.path.exists(train_output):
-        shutil.rmtree(train_output)
-    if os.path.exists(val_output):
-        shutil.rmtree(val_output)
+    # KỊCH BẢN A: Đã có sẵn folder train/ và val/ chuẩn trong Features
+    if os.path.exists(train_output) and os.path.exists(val_output) and train_output != source_dir:
+        train_classes = [d for d in os.listdir(train_output) if os.path.isdir(os.path.join(train_output, d))]
+        if len(train_classes) > 0:
+            print(f"🟢 [ADAPTER] Phát hiện dữ liệu Features train/val đã sẵn sàng ({len(train_classes)} lớp)!")
+            print("✅ DỮ LIỆU FEATURES ĐÃ SẴN SÀNG TRAIN!")
+            return
+
+    # KỊCH BẢN B: Nếu chưa chia, kiểm tra dọn dẹp và chia 80/20
+    if not os.path.exists(source_dir):
+        print(f"❌ Không tìm thấy thư mục ảnh nguồn tại: {source_dir}")
+        return
 
     # 2. Kiểm tra xem có sẵn cấu trúc train/val trong source_dir không
     if os.path.exists(os.path.join(source_dir, 'train')) and os.path.exists(os.path.join(source_dir, 'val')):

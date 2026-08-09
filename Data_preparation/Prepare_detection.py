@@ -59,14 +59,75 @@ def get_hand_bounding_box(image_path, hands_detector):
     return f"0 {x_center:.6f} {y_center:.6f} {box_w:.6f} {box_h:.6f}"
 
 def main():
-    print("=== Chuẩn bị dữ liệu Detection (Hands and Palm) với Auto-labeling ===")
+    print("=== DYNAMIC UNIVERSAL HAND DETECTION ADAPTER ===")
+    det_dir = config.DETECTION_DIR
+
+    # KỊCH BẢN A: Đã có sẵn tập dữ liệu gán nhãn chuẩn từ Roboflow / Kaggle (train/ và data.yaml)
+    if os.path.exists(os.path.join(det_dir, 'train')) and os.path.exists(os.path.join(det_dir, 'data.yaml')):
+        print("🟢 [ADAPTER] Phát hiện tập dữ liệu Roboflow/YOLO đã gán nhãn chuẩn!")
+        import glob
+        import shutil
+        import yaml
+
+        # 1. Gộp tập test (nếu có) vào valid để giữ tỷ lệ 80/20 chuẩn
+        test_img_dir = os.path.join(det_dir, 'test', 'images')
+        test_lbl_dir = os.path.join(det_dir, 'test', 'labels')
+        valid_img_dir = os.path.join(det_dir, 'valid', 'images')
+        valid_lbl_dir = os.path.join(det_dir, 'valid', 'labels')
+
+        if os.path.exists(test_img_dir):
+            print("  -> Tự động gộp tập dữ liệu 'test' sang 'valid'...")
+            os.makedirs(valid_img_dir, exist_ok=True)
+            os.makedirs(valid_lbl_dir, exist_ok=True)
+            for img in glob.glob(os.path.join(test_img_dir, '*.*')):
+                shutil.move(img, os.path.join(valid_img_dir, os.path.basename(img)))
+            for lbl in glob.glob(os.path.join(test_lbl_dir, '*.txt')):
+                shutil.move(lbl, os.path.join(valid_lbl_dir, os.path.basename(lbl)))
+            shutil.rmtree(os.path.join(det_dir, 'test'), ignore_errors=True)
+
+        # 2. Chuẩn hóa nhãn Single-Class ('hand' class 0)
+        txt_files = glob.glob(os.path.join(det_dir, '**', 'labels', '*.txt'), recursive=True)
+        for tf in txt_files:
+            with open(tf, 'r') as f:
+                lines = f.readlines()
+            new_lines = []
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) >= 5:
+                    parts[0] = '0'
+                    new_lines.append(' '.join(parts) + '\n')
+            with open(tf, 'w') as f:
+                f.writelines(new_lines)
+
+        # 3. Cập nhật data.yaml
+        yaml_path = os.path.join(det_dir, 'data.yaml')
+        yaml_data = {
+            'path': det_dir,
+            'train': 'train/images',
+            'val': 'valid/images',
+            'nc': 1,
+            'names': ['hand']
+        }
+        with open(yaml_path, 'w', encoding='utf-8') as f:
+            yaml.dump(yaml_data, f)
+
+        train_cnt = len(glob.glob(os.path.join(det_dir, 'train', 'images', '*.*')))
+        val_cnt = len(glob.glob(os.path.join(det_dir, 'valid', 'images', '*.*')))
+        print(f"✅ DỮ LIỆU ĐÃ SẴN SÀNG: Train ({train_cnt} ảnh - 80%) | Val ({val_cnt} ảnh - 20%)")
+        print("🚀 Khởi chạy train: python Cloud_server/Trainer/train_scripts/train_yolo.py")
+        return
+
+    # KỊCH BẢN B: Dữ liệu ảnh thô chưa gán nhãn + CSV cũ
+    print("🟡 [ADAPTER] Phát hiện dữ liệu thô. Chạy quy trình MediaPipe Auto-labeling...")
+    detection_csv = getattr(config, 'DETECTION_CSV', os.path.join(det_dir, 'HandInfo.csv'))
+    detection_img_dir = getattr(config, 'DETECTION_IMAGES_DIR', os.path.join(det_dir, 'Hands', 'Hands'))
     
-    # Khởi tạo MediaPipe Hands trực tiếp từ mp_hands
-    # min_detection_confidence thấp một chút để đảm bảo bắt được nhiều ảnh tay nhất có thể
+    if not os.path.exists(detection_csv):
+        print(f"❌ Không tìm thấy file CSV tại: {detection_csv}")
+        return
+
     hands_detector = mp_hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3)
-    
-    # Đọc CSV
-    df = pd.read_csv(config.DETECTION_CSV)
+    df = pd.read_csv(detection_csv)
     print(f"Tổng số dòng trong CSV: {len(df)}")
 
     # Loại bỏ dòng trùng ảnh

@@ -14,10 +14,11 @@ PROJECT_ROOT = BASE_DIR
 # Đường dẫn tới khu vực dữ liệu nghiên cứu
 RESEARCH_DATA_DIR = os.path.join(PROJECT_ROOT, 'Research_and_Data', 'Dataset')
 
-# ----------------- DETECTION -----------------
+# ----------------- DETECTION (YOLOv8 Standard) -----------------
 DETECTION_DIR = os.path.join(RESEARCH_DATA_DIR, 'Detection')
-DETECTION_IMAGES_DIR = os.path.join(DETECTION_DIR, 'Hands', 'Hands')   # Thư mục ảnh
-DETECTION_CSV = os.path.join(DETECTION_DIR, 'HandInfo.csv')             # File CSV thông tin ảnh Detection
+DETECTION_YAML = os.path.join(DETECTION_DIR, 'data.yaml')
+DETECTION_TRAIN_DIR = os.path.join(DETECTION_DIR, 'train', 'images')
+DETECTION_VAL_DIR = os.path.join(DETECTION_DIR, 'valid', 'images')
 
 # ----------------- CLASSIFICATION (Multi-Label) -----------------
 CLASSIFICATION_DIR = os.path.join(RESEARCH_DATA_DIR, 'Classification')
@@ -25,19 +26,18 @@ CLASSIFICATION_IMAGES_DIR = os.path.join(CLASSIFICATION_DIR, 'images')
 CLASSIFICATION_TRAIN_CSV = os.path.join(CLASSIFICATION_DIR, 'train.csv')
 CLASSIFICATION_VAL_CSV = os.path.join(CLASSIFICATION_DIR, 'val.csv')
 
-# ----------------- FEATURES -----------------
+# ----------------- FEATURES (Dynamic Auto-Detect) -----------------
 FEATURES_DIR = os.path.join(RESEARCH_DATA_DIR, 'Features')
-FEATURES_RAW_SUBDIR = 'asl-alphabet-train'
-FEATURES_RAW_DIR = os.path.join(FEATURES_DIR, FEATURES_RAW_SUBDIR)
+if os.path.exists(os.path.join(FEATURES_DIR, 'train')):
+    FEATURES_RAW_DIR = os.path.join(FEATURES_DIR, 'train')
+else:
+    subdirs = [os.path.join(FEATURES_DIR, d) for d in os.listdir(FEATURES_DIR) if os.path.isdir(os.path.join(FEATURES_DIR, d))] if os.path.exists(FEATURES_DIR) else []
+    FEATURES_RAW_DIR = subdirs[0] if subdirs else os.path.join(FEATURES_DIR, 'asl-alphabet-train')
 
-# ----------------- SEQUENCES -----------------
+# ----------------- SEQUENCES (Universal Directory) -----------------
 SEQUENCES_DIR = os.path.join(RESEARCH_DATA_DIR, 'Sequences')
-# Thư mục gốc chứa video phân loại theo lớp từ vựng (apple, book, cat,...)
-SEQUENCES_DATASET_DIR = os.path.join(SEQUENCES_DIR, 'archive', 'dataset', 'SL')
-# Thư mục chứa các video thô theo mã ID số (00335.mp4, 00336.mp4,...)
-SEQUENCES_VIDEOS_DIR = os.path.join(SEQUENCES_DIR, 'videos')
-# Dữ liệu CSV bổ sung (nếu có)
-SEQUENCES_CSV = os.path.join(SEQUENCES_DIR, 'hand_gestures.csv')
+SEQUENCES_PROCESSED_DIR = os.path.join(SEQUENCES_DIR, 'processed')         # Thư mục lưu mảng npy thành phẩm (train/val)
+SEQUENCES_CUSTOM_DIR = os.path.join(SEQUENCES_DIR, 'custom_enrollment')   # Thư mục lưu video mẫu nạp mới của Gia sư AI
 
 # ----------------- EDGE CASES -----------------
 EDGE_CASES_DIR = os.path.join(RESEARCH_DATA_DIR, '..', 'edge_cases')  # Nằm cùng cấp Dataset

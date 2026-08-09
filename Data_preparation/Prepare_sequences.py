@@ -118,8 +118,47 @@ def process_from_dataset_folder(dataset_dir, hands, seq_len, output_base, proces
     print(f"✅ Hoàn tất trích xuất từ Dataset: Train = {total_train} video, Val = {total_val} video.")
     return processed_ids
 
+def process_custom_enrollment_videos(hands, seq_len, output_base, processed_ids=None):
+    """Tự động quét động thư mục custom_enrollment chứa video mẫu nạp mới của Gia sư AI."""
+    if processed_ids is None:
+        processed_ids = set()
+
+    custom_dir = getattr(config, 'SEQUENCES_CUSTOM_DIR', os.path.join(config.SEQUENCES_DIR, 'custom_enrollment'))
+    if not os.path.exists(custom_dir):
+        return processed_ids
+
+    print(f"\n🎓 [ADAPTER] Đang quét động kho Video Mẫu Gia sư AI: {custom_dir}")
+    custom_words = [d for d in os.listdir(custom_dir) if os.path.isdir(os.path.join(custom_dir, d))]
+
+    for word_name in custom_words:
+        word_path = os.path.join(custom_dir, word_name)
+        v_files = [f for f in os.listdir(word_path) if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))]
+        for vid in v_files:
+            vid_id = os.path.splitext(vid)[0]
+            if vid_id in processed_ids:
+                continue
+
+            v_path = os.path.join(word_path, vid)
+            dst_dir = os.path.join(output_base, 'train', word_name)
+            npy_file = os.path.join(dst_dir, f"{vid_id}.npy")
+            if os.path.exists(npy_file):
+                processed_ids.add(vid_id)
+                continue
+
+            try:
+                seq = extract_keypoints(v_path, hands, seq_len)
+                if seq is not None:
+                    os.makedirs(dst_dir, exist_ok=True)
+                    np.save(npy_file, seq)
+                    processed_ids.add(vid_id)
+                    print(f"  ✅ Đã trích xuất nạp bổ sung Video Mẫu: '{word_name}' -> {vid_id}.npy")
+            except Exception as e:
+                print(f"  ⚠️ Bỏ qua video lỗi {v_path}: {e}")
+
+    return processed_ids
+
 def main():
-    print("=== Chuẩn bị dữ liệu Sequences (Trích xuất Keypoints từ Video Folder) ===")
+    print("=== DYNAMIC UNIVERSAL SEQUENCES ADAPTER ===")
     
     hands = mp_hands.Hands(
         static_image_mode=False,
@@ -128,16 +167,32 @@ def main():
         min_tracking_confidence=0.5
     )
     SEQ_LEN = 30
-    output_dir = os.path.join(config.SEQUENCES_DIR, 'processed')
+    output_dir = getattr(config, 'SEQUENCES_PROCESSED_DIR', os.path.join(config.SEQUENCES_DIR, 'processed'))
     os.makedirs(output_dir, exist_ok=True)
     processed_ids = set()
 
-    # --- 1. XỬ LÝ NGUỒN DATASET THƯ MỤC LỚP (archive/dataset/SL) ---
-    dataset_dir = getattr(config, 'SEQUENCES_DATASET_DIR', os.path.join(config.SEQUENCES_DIR, 'archive', 'dataset', 'SL'))
+    # KỊCH BẢN A: Kiểm tra xem đã có sẵn mảng .npy processed trong train/val chưa
+    train_npy_files = []
+    if os.path.exists(os.path.join(output_dir, 'train')):
+        for root, _, files in os.walk(os.path.join(output_dir, 'train')):
+            for f in files:
+                if f.endswith('.npy'): train_npy_files.append(f)
+
+    if len(train_npy_files) > 0:
+        print(f"🟢 [ADAPTER] Phát hiện dữ liệu mảng NumPy Sequences đã được trích xuất sẵn ({len(train_npy_files)} file .npy)!")
+
+    # 1. Tự động quét bổ sung Video Mẫu mới từ kho Gia sư AI (custom_enrollment)
+    process_custom_enrollment_videos(hands, SEQ_LEN, output_dir, processed_ids)
+
+    # 2. XỬ LÝ NGUỒN DATASET THƯ MỤC LỚP
+    dataset_dir = os.path.join(config.SEQUENCES_DIR, 'archive', 'dataset', 'SL')
+    if not os.path.exists(dataset_dir):
+        # Tự động quét động bất kỳ thư mục con nào chứa video
+        subdirs = [os.path.join(config.SEQUENCES_DIR, d) for d in os.listdir(config.SEQUENCES_DIR) if os.path.isdir(os.path.join(config.SEQUENCES_DIR, d)) and d not in ['processed', 'custom_enrollment']]
+        dataset_dir = subdirs[0] if subdirs else dataset_dir
+
     if os.path.exists(dataset_dir):
         process_from_dataset_folder(dataset_dir, hands, SEQ_LEN, output_dir, processed_ids)
-    else:
-        print(f"ℹ️ Không tìm thấy thư mục dataset tại {dataset_dir}, bỏ qua.")
 
     # --- 2. XỬ LÝ NGUỒN CSV BỔ SUNG (nếu có) ---
     csv_path = getattr(config, 'SEQUENCES_CSV', None)

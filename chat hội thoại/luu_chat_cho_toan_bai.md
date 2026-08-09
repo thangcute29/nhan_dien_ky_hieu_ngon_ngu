@@ -385,13 +385,24 @@ if action:
 > **File liên quan:** `Tools/video_translator.py`, `Tools/ai_tutor_engine.py`, `Mobile_app/Src/Main.py`  
 > **Tác giả:** Pair Programming cùng AI Assistant Antigravity  
 
-### 📍 Mã nguồn module chuyên biệt đã tạo:
-1. **[`Tools/video_translator.py`](file:///D:/THUC_TAP_CCVI/Nhan_dien_ngon_ngu_ky_hieu/Tools/video_translator.py):**  
-   Xử lý độc lập luồng đọc, cắt frame và dịch thuật video MP4/AVI.
-2. **[`Tools/ai_tutor_engine.py`](file:///D:/THUC_TAP_CCVI/Nhan_dien_ngon_ngu_ky_hieu/Tools/ai_tutor_engine.py):**  
-   - Tiếp nhận NẠP BỔ SUNG Video Mẫu mới vào kho `Sequences/custom_enrollment/`.
-   - Tính toán độ cao giơ tay ($y1 > h \times 0.65$) và chấm điểm tương đồng % cử chỉ.
-   - **Vẽ NGƯỜI ẢO AI TRỢ LÝ (AI Virtual Avatar Robot Head):** Vẽ Avatar AI mắt LED Xanh nổi bật ở góc phải màn hình camera, hiển thị bong bóng hội thoại chỉ vị trí sai và tự động phát tiếng nói nhắc nhở qua TTS (`"Hãy nâng tay cao hơn ngang ngực!"` / `"Xuất sắc! Bạn làm đúng rồi!"`).
+---
+
+## 11. Tinh Gọn `config.py` & Chuẩn Hóa 4 Script Chuẩn Bị Dữ Liệu (`Prepare_*.py`)
+
+> **Ngày thực hiện:** 10/08/2026  
+> **File liên quan:** `config.py`, `Data_preparation/Prepare_*.py`, `README.md`  
+> **Tác giả:** Pair Programming cùng AI Assistant Antigravity  
+
+### 📍 Thao tác kỹ thuật đã hoàn tất:
+1. **Loại bỏ 100% đường dẫn gán cứng trong `config.py`:**
+   - Tinh gọn khu vực `SEQUENCES` về 3 dòng định danh chuẩn: `SEQUENCES_DIR`, `SEQUENCES_PROCESSED_DIR`, `SEQUENCES_CUSTOM_DIR`.
+   - Loại bỏ hoàn toàn các câu lệnh `if/elif` rườm rà thừa thãi.
+2. **Nâng cấp 4 Script `Prepare_*.py` với Universal Dynamic Adapter:**
+   - **`Prepare_detection.py`:** Tự phát hiện dataset Roboflow/YOLO, gộp `test` sang `valid` chuẩn 80/20 và ép Single-Class `hand`.
+   - **`Prepare_classification.py`:** Nhận diện file `train.csv` / `val.csv` đã gộp để bảo vệ dữ liệu.
+   - **`prepare_features.py`:** Tự quét folder lớp ảnh ký hiệu tĩnh `train/` và `val/`.
+   - **`Prepare_sequences.py`:** Dùng `os.walk` quét động toàn bộ video thô và video mẫu nạp mới (`custom_enrollment`) để trích xuất 126 keypoints tự động.
+
 
 
 
