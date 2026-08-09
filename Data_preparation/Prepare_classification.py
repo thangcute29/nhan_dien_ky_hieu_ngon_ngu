@@ -23,19 +23,22 @@ def main():
         print("✅ DỮ LIỆU CLASSIFICATION ĐÃ SẴN SÀNG TRAIN!")
         return
 
-    # KỊCH BẢN B: Tự động quét bất kỳ file CSV mới nào được nạp vào thư mục Classification
+    # KỊCH BẢN B: Tự động quét bất kỳ file CSV hoặc JSON mới nào trong Classification
     import glob
-    csv_candidates = glob.glob(os.path.join(config.CLASSIFICATION_DIR, "*.csv"))
-    csv_candidates = [c for c in csv_candidates if not c.endswith("train.csv") and not c.endswith("val.csv")]
+    label_candidates = glob.glob(os.path.join(config.CLASSIFICATION_DIR, "*.csv")) + glob.glob(os.path.join(config.CLASSIFICATION_DIR, "*.json"))
+    label_candidates = [c for c in label_candidates if not c.endswith("train.csv") and not c.endswith("val.csv")]
 
-    if not csv_candidates:
-        print(f"❌ Không tìm thấy file nhãn CSV mới nào trong thư mục: {config.CLASSIFICATION_DIR}")
+    if not label_candidates:
+        print(f"❌ Không tìm thấy file nhãn CSV hay JSON mới nào trong thư mục: {config.CLASSIFICATION_DIR}")
         return
 
-    source_csv = csv_candidates[0]
-    print(f"📂 [ADAPTER] Đang tự động quét và phân tích file nhãn mới: {os.path.basename(source_csv)}...")
-    df = pd.read_csv(source_csv)
-    print(f"Tổng số dòng ban đầu trong CSV: {len(df)}")
+    source_file = label_candidates[0]
+    print(f"📂 [ADAPTER] Đang tự động quét và phân tích file nhãn mới: {os.path.basename(source_file)}...")
+    if source_file.endswith('.json'):
+        df = pd.read_json(source_file)
+    else:
+        df = pd.read_csv(source_file)
+    print(f"Tổng số dòng ban đầu trong file nhãn: {len(df)}")
     
     # Loại bỏ dòng trùng lặp dựa trên imageName để đảm bảo sạch dữ liệu
     df_unique = df.drop_duplicates(subset=['imageName'])
