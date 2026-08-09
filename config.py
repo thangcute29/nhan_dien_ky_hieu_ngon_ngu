@@ -7,9 +7,9 @@ import io
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# Đường dẫn gốc của toàn bộ dự án (nơi chứa cả SIGN_LANGUAGE_MARKET_READY và Research_and_Data)
-
-PROJECT_ROOT = r"D:\THUC_TAP_CCVI\Sign_language"
+# --- CẤU HÌNH ĐƯỜNG DẪN THƯ MỤC GỐC ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = BASE_DIR
 
 # Đường dẫn tới khu vực dữ liệu nghiên cứu
 RESEARCH_DATA_DIR = os.path.join(PROJECT_ROOT, 'Research_and_Data', 'Dataset')
@@ -17,6 +17,7 @@ RESEARCH_DATA_DIR = os.path.join(PROJECT_ROOT, 'Research_and_Data', 'Dataset')
 # ----------------- DETECTION -----------------
 DETECTION_DIR = os.path.join(RESEARCH_DATA_DIR, 'Detection')
 DETECTION_IMAGES_DIR = os.path.join(DETECTION_DIR, 'Hands', 'Hands')   # Thư mục ảnh
+DETECTION_CSV = os.path.join(DETECTION_DIR, 'HandInfo.csv')             # File CSV thông tin ảnh Detection
 
 # ----------------- CLASSIFICATION (Multi-Label) -----------------
 CLASSIFICATION_DIR = os.path.join(RESEARCH_DATA_DIR, 'Classification')
@@ -31,15 +32,12 @@ FEATURES_RAW_DIR = os.path.join(FEATURES_DIR, FEATURES_RAW_SUBDIR)
 
 # ----------------- SEQUENCES -----------------
 SEQUENCES_DIR = os.path.join(RESEARCH_DATA_DIR, 'Sequences')
-# Dữ liệu WLASL: file JSON chính (nslt_300.json)
-SEQUENCES_JSON = os.path.join(SEQUENCES_DIR, 'nslt_100.json')
-# Dữ liệu CSV (nếu có) – khai báo tường minh
-SEQUENCES_CSV = os.path.join(SEQUENCES_DIR, 'hand_gestures.csv')   # Khai báo file CSV bổ sung
-# Thư mục chứa video gốc (các file .mp4 với tên {video_id}.mp4)
+# Thư mục gốc chứa video phân loại theo lớp từ vựng (apple, book, cat,...)
+SEQUENCES_DATASET_DIR = os.path.join(SEQUENCES_DIR, 'archive', 'dataset', 'SL')
+# Thư mục chứa các video thô theo mã ID số (00335.mp4, 00336.mp4,...)
 SEQUENCES_VIDEOS_DIR = os.path.join(SEQUENCES_DIR, 'videos')
-# Thư mục gốc để quét cấu trúc train/val có sẵn (nếu có)
-SEQUENCES_RAW_SUBDIR = 'files'
-SEQUENCES_RAW_DIR = os.path.join(SEQUENCES_DIR, SEQUENCES_RAW_SUBDIR)
+# Dữ liệu CSV bổ sung (nếu có)
+SEQUENCES_CSV = os.path.join(SEQUENCES_DIR, 'hand_gestures.csv')
 
 # ----------------- EDGE CASES -----------------
 EDGE_CASES_DIR = os.path.join(RESEARCH_DATA_DIR, '..', 'edge_cases')  # Nằm cùng cấp Dataset

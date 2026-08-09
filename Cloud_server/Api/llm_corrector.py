@@ -8,7 +8,10 @@ sys.path.append(
 )  # Vì project AI thường có nhiều folder để tránh lỗi import và tiện chạy file từ nhiều nơi
 import config
 
-from shared_lib.constants import LLM_SYSTEM_PROMPT
+try:
+    from Shared_lib.Constants import LLM_SYSTEM_PROMPT
+except ImportError:
+    from shared_lib.constants import LLM_SYSTEM_PROMPT
 
 
 class LLMCorrector:
@@ -108,13 +111,13 @@ class LLMCorrector:
             return text
 
     def _check_google(self):
-    # Thử ping Google để kiểm tra mạng
-    try:
-        import requests
-        requests.get("https://generativelanguage.googleapis.com", timeout=2)
-        return True
-    except:
-        return False
+        # Thử ping Google để kiểm tra mạng
+        try:
+            import requests
+            requests.get("https://generativelanguage.googleapis.com", timeout=2)
+            return True
+        except:
+            return False
     
 
 # ============================OPENAI SYSTEM PROMPT NẾU SỬ DỤNG============================

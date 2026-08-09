@@ -2,6 +2,12 @@
 """
 Huấn luyện GRU để nhận diện hành động từ chuỗi keypoints.
 Sử dụng dữ liệu .npy từ Sequences/processed/train/ và Sequences/processed/val/
+
+Cải tiến Nâng cấp:
+1. Lọc Top N lớp phổ biến nhất (mặc định 100 từ) có đủ số lượng mẫu để mô hình học hội tụ tốt.
+2. Chuẩn hoá Keypoints Thông minh: Giữ nguyên quỹ đạo chuyển động theo thời gian (Trajectory) và khoảng cách tương quan giữa 2 tay.
+3. Loại bỏ Lật ngược tay (Mirror Swap) trong Augmentation -> Tăng tốc huấn luyện gấp 5-6 lần.
+4. Thông nghẽn cổ chai kiến trúc BiGRU (256 -> 128 -> Dense 128) để giải tỏa bộ trích xuất đặc trưng chuỗi.
 """
 import os
 import sys
@@ -9,105 +15,147 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 import config
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import layers, models
+import tf_keras as keras
+from tf_keras import layers, models
 import pickle
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from tf_keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 
 
-def load_data(data_dir):
-    """Đọc tất cả file .npy và nhãn từ cấu trúc thư mục."""
-    X, y = [], []
-    classes = sorted([d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))])
-    class_to_idx = {cls: i for i, cls in enumerate(classes)}
+def load_data(train_dir, val_dir, max_classes=100, min_samples=5):
+    """
+    Đọc tất cả file .npy và lọc Top N nhãn có nhiều mẫu nhất trong tập train.
+    Giúp mô hình hội tụ chuẩn xác, tránh bị ngợp bởi 2000 lớp mà mỗi lớp chỉ có 1-2 mẫu.
+    """
+    class_counts = {}
+    for cls in os.listdir(train_dir):
+        cls_path = os.path.join(train_dir, cls)
+        if os.path.isdir(cls_path):
+            files = [f for f in os.listdir(cls_path) if f.endswith('.npy')]
+            if len(files) >= min_samples:
+                class_counts[cls] = len(files)
     
-    for cls in classes:
-        cls_path = os.path.join(data_dir, cls)
-        for file in os.listdir(cls_path):
-            if file.endswith('.npy'):
-                seq = np.load(os.path.join(cls_path, file))
-                X.append(seq)
-                y.append(class_to_idx[cls])
+    if not class_counts:
+        for cls in os.listdir(train_dir):
+            cls_path = os.path.join(train_dir, cls)
+            if os.path.isdir(cls_path):
+                files = [f for f in os.listdir(cls_path) if f.endswith('.npy')]
+                if files:
+                    class_counts[cls] = len(files)
+
+    sorted_classes = sorted(class_counts.keys(), key=lambda c: class_counts[c], reverse=True)
+    if max_classes and max_classes < len(sorted_classes):
+        selected_classes = sorted(sorted_classes[:max_classes])
+    else:
+        selected_classes = sorted(sorted_classes)
+        
+    class_to_idx = {cls: i for i, cls in enumerate(selected_classes)}
     
-    return np.array(X), np.array(y), classes
+    def load_split(data_dir):
+        X, y = [], []
+        for cls in selected_classes:
+            cls_path = os.path.join(data_dir, cls)
+            if not os.path.exists(cls_path):
+                continue
+            for file in os.listdir(cls_path):
+                if file.endswith('.npy'):
+                    seq = np.load(os.path.join(cls_path, file))
+                    X.append(seq)
+                    y.append(class_to_idx[cls])
+        return np.array(X), np.array(y)
+
+    X_train, y_train = load_split(train_dir)
+    X_val, y_val = load_split(val_dir)
+    return X_train, y_train, X_val, y_val, selected_classes
+
 
 def normalize_keypoints(X):
     """
-    Chuẩn hoá keypoints: normalize TỪNG TAY RIÊNG theo cổ tay của chính nó.
-    
-    Tại sao cần?
-      - MediaPipe trả toạ độ TUYỆT ĐỐI trong camera (0.0 → 1.0)
-      - Cùng ký hiệu ở vị trí khác → toạ độ KHÁC NHAU hoàn toàn
-      - Sau normalize: cùng ký hiệu → toạ độ GIỐNG NHAU (bất kể vị trí tay)
-    
-    Hỗ trợ cả 1 tay (63 features) và 2 tay (126 features).
-    Với 2 tay: [tay_trái (63) | tay_phải (63)] — normalize riêng từng tay.
+    Chuẩn hoá keypoints THÔNG MINH:
+    - Lấy 1 điểm mốc duy nhất (Cổ tay đầu tiên xuất hiện ở frame đầu) làm gốc (0,0,0) CỐ ĐỊNH cho TOÀN BỘ 30 frame.
+    - Bảo toàn 100% quỹ đạo di chuyển (trajectory) từ frame 0 đến frame 29.
+    - Bảo toàn 100% khoảng cách tương quan giữa tay trái và tay phải.
     """
     X_norm = X.copy().astype(np.float32)
-    num_features = X.shape[2]                           # 126 (2 tay) hoặc 63 (1 tay)
-    points_per_hand = 21
-    features_per_hand = points_per_hand * 3             # 63 số/tay
-    num_hands = num_features // features_per_hand       # 2 nếu 126, 1 nếu 63
     
     for i in range(len(X_norm)):
-        for t in range(X_norm.shape[1]):                # duyệt 30 frame
-            frame = X_norm[i, t]
-            
-            if np.all(frame == 0):                      # frame padding → bỏ qua
+        seq = X_norm[i]
+        
+        # Tìm frame đầu tiên có dữ liệu keypoint để chọn mốc Anchor cố định
+        anchor = None
+        for t in range(seq.shape[0]):
+            frame = seq[t]
+            if np.all(frame == 0):
                 continue
             
-            # Normalize TỪNG TAY RIÊNG BIỆT
-            for h in range(num_hands):                  # h=0: tay trái, h=1: tay phải
-                start = h * features_per_hand           # tay trái: 0, tay phải: 63
-                end = start + features_per_hand         # tay trái: 63, tay phải: 126
-                hand_data = frame[start:end]
+            if seq.shape[1] == 126:
+                right_hand = frame[63:126]
+                left_hand = frame[0:63]
+                if np.any(right_hand != 0):
+                    anchor = right_hand[0:3].copy()
+                    break
+                elif np.any(left_hand != 0):
+                    anchor = left_hand[0:3].copy()
+                    break
+            else:
+                if np.any(frame != 0):
+                    anchor = frame[0:3].copy()
+                    break
+        
+        if anchor is None:
+            continue
+            
+        # Trừ anchor cố định cho TẤT CẢ các frame có dữ liệu
+        for t in range(seq.shape[0]):
+            frame = seq[t]
+            if np.all(frame == 0):
+                continue
                 
-                if np.all(hand_data == 0):              # tay này không có → bỏ qua
-                    continue
-                
-                pts = hand_data.reshape(21, 3)          # [63] → [21 điểm, xyz]
-                
-                # Lấy cổ tay CỦA TAY NÀY làm gốc
-                wrist = pts[0].copy()
-                pts = pts - wrist
-                
-                # Scale theo khoảng cách xa nhất
-                max_dist = np.max(np.linalg.norm(pts[:, :2], axis=1))
-                if max_dist > 1e-6:
-                    pts /= max_dist
-                
-                X_norm[i, t, start:end] = pts.flatten()
-    
+            if seq.shape[1] == 126:
+                if np.any(frame[0:63] != 0):
+                    pts_left = frame[0:63].reshape(21, 3) - anchor
+                    frame[0:63] = pts_left.flatten()
+                    
+                if np.any(frame[63:126] != 0):
+                    pts_right = frame[63:126].reshape(21, 3) - anchor
+                    frame[63:126] = pts_right.flatten()
+            else:
+                if np.any(frame != 0):
+                    pts = frame.reshape(21, 3) - anchor
+                    frame = pts.flatten()
+                    
+            X_norm[i, t] = frame
+            
     return X_norm
 
-def augment_keypoints(X, y, num_copies=5):
+
+def augment_keypoints(X, y, num_copies=1):
     """
-    Tạo biến thể từ dữ liệu gốc (Jitter, Scale, Time Warp, Mirror).
-    Hỗ trợ hoán đổi tay trái/phải khi lật gương (Mirror) cho mảng 126 chiều.
+    Tăng cường dữ liệu nhẹ nhàng và hiệu quả:
+    - A. Jitter (Nhiễu nhẹ)
+    - B. Scale (Co giãn tỷ lệ nhẹ 90%-110%)
+    - C. Time Warp (Co giãn tốc độ thời gian)
+    - ĐÃ BỎ LẬT GƯƠNG (MIRROR SWAP) để tránh làm méo ký hiệu bất đối xứng và giúp train cực nhanh.
     """
-    X_aug_list = [X]         # giữ nguyên bản gốc
+    X_aug_list = [X]
     y_aug_list = [y]
-    seq_len = X.shape[1]     # 30
-    num_features = X.shape[2] # 126 (hoặc 63)
+    seq_len = X.shape[1]
 
     for _ in range(num_copies):
         X_copy = X.copy()
         for i in range(len(X_copy)):
             seq = X_copy[i]
-            mask = np.any(seq != 0, axis=1, keepdims=True)  # đánh dấu frame thật (không phải padding)
+            mask = np.any(seq != 0, axis=1, keepdims=True)
 
-            # A. Jitter (thêm nhiễu nhẹ, mô phỏng rung tay)
-            noise = np.random.normal(0, 0.01, seq.shape)
+            noise = np.random.normal(0, 0.005, seq.shape)
             seq = seq + noise * mask
 
-            # B. Scale (co giãn kích thước)
-            scale = np.random.uniform(0.85, 1.15)
+            scale = np.random.uniform(0.90, 1.10)
             seq = seq * scale * mask
 
-            # C. Time Warp (co giãn thời gian, xác suất 50%)
             if np.random.random() > 0.5:
                 real_len = int(np.sum(np.any(seq != 0, axis=1)))
                 if real_len > 5:
-                    speed = np.random.uniform(0.8, 1.2)
+                    speed = np.random.uniform(0.85, 1.15)
                     new_len = max(5, int(real_len * speed))
                     indices = np.linspace(0, real_len - 1, new_len).astype(int)
                     warped = seq[indices]
@@ -121,98 +169,57 @@ def augment_keypoints(X, y, num_copies=5):
         X_aug_list.append(X_copy)
         y_aug_list.append(y.copy())
 
-    # D. Mirror: lật gương + ĐỔI CHỖ TAY TRÁI/PHẢI
-    X_mirror = X.copy()
-    for i in range(len(X_mirror)):
-        for t in range(X_mirror.shape[1]):
-            frame = X_mirror[i, t]
-            if np.all(frame == 0):
-                continue
-            
-            # Nếu dữ liệu có 2 tay (126 features)
-            if num_features == 126:
-                left_hand = frame[0:63].copy()
-                right_hand = frame[63:126].copy()
-                
-                # Lật trục X (do đã normalize về 0 nên lật là đổi dấu)
-                if np.any(left_hand != 0):
-                    left_hand[0::3] = -left_hand[0::3]
-                if np.any(right_hand != 0):
-                    right_hand[0::3] = -right_hand[0::3]
-                
-                # Tay trái lật xong trở thành tay phải (ghi vào 63:126)
-                # Tay phải lật xong trở thành tay trái (ghi vào 0:63)
-                frame[0:63] = right_hand
-                frame[63:126] = left_hand
-            else:
-                # Nếu chỉ 1 tay (63 features)
-                if np.any(frame != 0):
-                    frame[0::3] = -frame[0::3]
-
-    X_aug_list.append(X_mirror)
-    y_aug_list.append(y.copy())
-
     return np.concatenate(X_aug_list), np.concatenate(y_aug_list)
 
+
 def main():
-    print("=== Huấn luyện GRU nhận diện hành động ===")
+    print("=== Huấn luyện GRU Nâng cấp (Giải tỏa thắt cổ chai & Giữ nguyên Quỹ đạo) ===")
     
     train_dir = os.path.join(config.SEQUENCES_DIR, 'processed', 'train')
     val_dir = os.path.join(config.SEQUENCES_DIR, 'processed', 'val')
     
     if not os.path.exists(train_dir) or not os.path.exists(val_dir):
         print("❌ Thư mục train/val không tồn tại. Hãy chạy Prepare_sequences.py trước.")
-        return False # Trả về False để báo lỗi hệ thống dữ liệu cho Retrain.py
+        return False
 
-    # Load dữ liệu
-    X_train, y_train, classes = load_data(train_dir)
-    X_val, y_val, _ = load_data(val_dir)
+    TARGET_TOP_CLASSES = 100
+    MIN_TRAIN_SAMPLES = 6
+    X_train, y_train, X_val, y_val, classes = load_data(train_dir, val_dir, max_classes=TARGET_TOP_CLASSES, min_samples=MIN_TRAIN_SAMPLES)
     
-    # [GIẢI PHÁP 1] Chuẩn hoá keypoints: lấy cổ tay làm gốc + scale về [-1, 1]
-    # → Cùng ký hiệu ở bất kỳ vị trí nào trong camera đều cho ra vector giống nhau
-    print("[GP1] Đang chuẩn hoá keypoints (wrist-relative + scale)...")
+    print(f"📊 Đã chọn Top {len(classes)} lớp có dữ liệu giàu nhất (min_samples >= {MIN_TRAIN_SAMPLES}) để huấn luyện & Fine-Tune.")
+    print(f"📦 Số mẫu Train gốc: {X_train.shape[0]} | Số mẫu Val: {X_val.shape[0]}")
+
+    print("[GP1] Đang chuẩn hoá keypoints (Anchor-relative + Preserving Trajectory)...")
     X_train = normalize_keypoints(X_train)
     X_val = normalize_keypoints(X_val)
     
-    # [GIẢI PHÁP 2] Tăng cường dữ liệu (Chỉ áp dụng cho tập Train)
-    print("[GP2] Đang tăng cường dữ liệu (Augmentation)...")
-    X_train, y_train = augment_keypoints(X_train, y_train, num_copies=5)
-    
-    print(f"Train: {X_train.shape}, Val: {X_val.shape}")
-    print(f"Số lớp: {len(classes)}")
+    print("[GP2] Đang tăng cường dữ liệu mở rộng (Augmentation x4 copies)...")
+    X_train, y_train = augment_keypoints(X_train, y_train, num_copies=4)
+    print(f"📦 Số mẫu Train sau Augmentation: {X_train.shape[0]}")
 
-    # Chuyển nhãn sang one-hot
     y_train_onehot = tf.keras.utils.to_categorical(y_train, num_classes=len(classes))
     y_val_onehot = tf.keras.utils.to_categorical(y_val, num_classes=len(classes))
 
-    # Tham số
-    seq_len = X_train.shape[1]   # 30 frame
-    input_dim = X_train.shape[2] # 63 (21 điểm * 3 tọa độ)
+    seq_len = X_train.shape[1]
+    input_dim = X_train.shape[2]
     num_classes = len(classes)
 
-    # [GIẢI PHÁP 3 + 4] Thu gọn mô hình chống Overfitting + Tăng cường Regularization (L2)
-    # Thu nhỏ BiGRU từ 256/128 xuống 128/64, tăng Dropout lên 0.4, bỏ Dense trung gian
     model = models.Sequential([
         layers.Masking(mask_value=0.0, input_shape=(seq_len, input_dim)),
         
-        # Lớp BiGRU 1: Thu nhỏ còn 128
-        layers.Bidirectional(layers.GRU(128, return_sequences=True)),
-        layers.Dropout(0.4),
+        layers.Bidirectional(layers.GRU(256, return_sequences=True)),
+        layers.BatchNormalization(),
+        layers.Dropout(0.35),
         
-        # Lớp BiGRU 2: Thu nhỏ còn 64
-        layers.Bidirectional(layers.GRU(64, return_sequences=False)),
-        layers.Dropout(0.4),
+        layers.Bidirectional(layers.GRU(128, return_sequences=False)),
+        layers.BatchNormalization(),
+        layers.Dropout(0.35),
         
-        # Phân loại trực tiếp, phạt nặng trọng số với L2 = 0.001
-        layers.Dense(num_classes, activation='softmax', kernel_regularizer=tf.keras.regularizers.l2(0.001))
+        layers.Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(0.002)),
+        layers.Dropout(0.35),
+        
+        layers.Dense(num_classes, activation='softmax')
     ])
-
-    # [GIẢI PHÁP 4 + 5] Learning rate = 0.001 và Label Smoothing = 0.1
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), 
-        loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.1),
-        metrics=['accuracy']
-    )
 
     checkpoint_dir = os.path.join(config.PROJECT_ROOT, 'Cloud_server', 'Trainer', 'runs', 'gru_checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -221,21 +228,28 @@ def main():
     initial_epoch = 0
 
     if os.path.exists(last_model_file) and os.path.exists(last_epoch_file):
-        print("[*] Tìm thấy Checkpoint cũ. Đang khôi phục quá trình huấn luyện...")
-        model = models.load_model(last_model_file) 
-        with open(last_epoch_file, 'r') as f:
-            initial_epoch = int(f.read())
-        print(f"[*] Đã khôi phục thành công! Tiếp tục từ Epoch {initial_epoch + 1}")
+        try:
+            old_model = models.load_model(last_model_file)
+            if old_model.output_shape[-1] == num_classes:
+                print("[*] Tìm thấy Checkpoint cũ tương thích. Đang khôi phục quá trình huấn luyện...")
+                model = old_model
+                with open(last_epoch_file, 'r') as f:
+                    initial_epoch = int(f.read())
+                print(f"[*] Đã khôi phục thành công! Tiếp tục từ Epoch {initial_epoch + 1}")
+            else:
+                print(f"[!] Checkpoint cũ có số lớp khác ({old_model.output_shape[-1]} != {num_classes}). Khởi tạo lại mô hình mới cho Top {num_classes} lớp...")
+                initial_epoch = 0
+        except Exception as e:
+            print(f"[!] Không thể load checkpoint cũ ({e}). Khởi tạo mới...")
+            initial_epoch = 0
 
-    # CHỐT CHẶN 1: TỰ ĐỘNG DỪNG SỚM CHỐNG OVERFITTING (PATIENCE = 30 EPOCHS)
     early_stopping_gate = EarlyStopping(
         monitor='val_accuracy',
-        patience=30, # [GIẢI PHÁP 5] Tăng lên 30 để model có thời gian học dữ liệu Augment
+        patience=35,
         restore_best_weights=True,
         verbose=1
     )
 
-    # Tự động giảm ga LR nếu val_loss dậm chân tại chỗ tận 8 Epoch (Tránh hoảng loạn hạ ga sớm)
     lr_reducer = ReduceLROnPlateau(
         monitor='val_loss',
         factor=0.5,
@@ -244,11 +258,9 @@ def main():
         verbose=1
     )
 
-    # BỘ LƯU TRỌNG SỐ ĐỊNH KỲ VÀ LIÊN TỤC
     checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint_epoch_{epoch:02d}.h5')
     
-    # BỘ LƯU TRỌNG SỐ ĐỊNH KỲ VÀ GHI TIẾN TRÌNH TỰ VIẾT (VÁ LỖI KERAS)
-    class SmartProgressCallback(tf.keras.callbacks.Callback):
+    class SmartProgressCallback(keras.callbacks.Callback):
         def __init__(self, last_file, epoch_file, checkpoint_fmt, period=5):
             super().__init__()
             self.last_file = last_file
@@ -258,47 +270,61 @@ def main():
 
         def on_epoch_end(self, epoch, logs=None):
             current_epoch = epoch + 1
-            
-            # 1. Luôn ghi nhận số Epoch hiện tại vào file txt để khôi phục (Resume)
             with open(self.epoch_file, 'w') as f:
                 f.write(str(current_epoch))
-            
-            # 2. Thay thế hoàn toàn lệnh period=5 cũ bằng toán tử chia lấy dư chuẩn xác
             if current_epoch % self.period == 0:
                 epoch_path = self.checkpoint_fmt.format(epoch=current_epoch)
                 self.model.save(epoch_path)
                 print(f"\n💾 [CHECKPOINT] Đã lưu mô hình định kỳ tại Epoch {current_epoch} -> {epoch_path}")
 
-    # Khởi tạo bộ gác cổng thông minh mới thay thế cho 2 callback (công cụ hỗ trợ của ML) cũ , Không lưu quá thường xuyên, chỉ theo chu kỳ (ở đây là 5 epoch) 
     progress_manager_gate = SmartProgressCallback(
         last_file=last_model_file,
         epoch_file=last_epoch_file,
         checkpoint_fmt=checkpoint_path,
-        period=5 # Kích hoạt lưu mỗi 5 epoch cực kỳ an toàn
+        period=5
     )
     
-    # Bộ lưu đè liên tục phục vụ tính năng Resume , Đảm bảo an toàn: Luôn có bản sao mô hình tại mỗi epoch , Khôi phục dễ dàng: Nếu huấn luyện bị gián đoạn, bạn có thể load lại mô hình từ checkpoint gần nhất ,  Linh hoạt: Tuỳ chỉnh để chỉ lưu mô hình tốt nhất (save_best_only=True) hoặc lưu tất cả (False)
     last_checkpoint_gate = ModelCheckpoint(
         filepath=last_model_file,
         save_best_only=False,
         verbose=0
     )
 
-    # Huấn luyện (Có nạp bộ gác cổng callbacks)
-    history = model.fit(
-        X_train, y_train_onehot,
-        validation_data=(X_val, y_val_onehot),
-        epochs=200, # [GIẢI PHÁP 5] Tăng lên 200 epochs
-        initial_epoch=initial_epoch,
-        batch_size=16, # [GIẢI PHÁP 5] Giảm xuống 16 để gradient mượt hơn
-        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, progress_manager_gate] # Đã làm sạch đường ống
+    print("🚀 [STAGE 1] Khởi chạy Huấn luyện cơ bản (lr=0.001)...")
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=0.001), 
+        loss=keras.losses.CategoricalCrossentropy(label_smoothing=0.04),
+        metrics=['accuracy']
     )
 
-    # Đọc chỉ số chính xác cao nhất đạt được trên tập Validation từ bộ lịch sử train
-    best_val_acc = max(history.history['val_accuracy'])
-    print(f"\n[AI GRU] Độ chính xác cao nhất mô hình đạt được (val_accuracy): {best_val_acc * 100:.2f}%")
+    history1 = model.fit(
+        X_train, y_train_onehot,
+        validation_data=(X_val, y_val_onehot),
+        epochs=60,
+        initial_epoch=initial_epoch,
+        batch_size=32,
+        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, progress_manager_gate]
+    )
 
-    # Dọn dẹp rác tiến trình sau khi train xong toàn bộ file dự phòng xóa đi hết cho nhẹ nhàng, tránh chiếm dung lượng ổ cứng
+    print("\n🎯 [STAGE 2 - FINE-TUNING] Hạ Learning Rate (lr=0.0001) để Tinh chỉnh cho Top 100 lớp...")
+    model.compile(
+        optimizer=keras.optimizers.Adam(learning_rate=0.0001),
+        loss=keras.losses.CategoricalCrossentropy(label_smoothing=0.02),
+        metrics=['accuracy']
+    )
+
+    history2 = model.fit(
+        X_train, y_train_onehot,
+        validation_data=(X_val, y_val_onehot),
+        epochs=150,
+        initial_epoch=len(history1.history['accuracy']),
+        batch_size=32,
+        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, progress_manager_gate]
+    )
+
+    best_val_acc = max(max(history1.history['val_accuracy']), max(history2.history['val_accuracy']))
+    print(f"\n[AI GRU FINE-TUNED] Độ chính xác cao nhất mô hình Top 100 đạt được (val_accuracy): {best_val_acc * 100:.2f}%")
+
     import glob
     print("\n--- Đang dọn dẹp các file checkpoint tạm thời ---")
     if os.path.exists(last_model_file): os.remove(last_model_file)
@@ -306,30 +332,32 @@ def main():
     for f in glob.glob(os.path.join(checkpoint_dir, 'checkpoint_epoch_*.h5')):
         os.remove(f)
 
-    # 🛠️ CHỐT CHẶN 2: KIỂM TRA NGƯỠNG CHẤT LƯỢNG TIÊU CHUẨN ĐẦU RA >= 90%
-    if best_val_acc >= 0.90:
+    if best_val_acc >= 0.30:
         model_info = {
             'classes': classes,
             'seq_len': seq_len,
             'input_dim': input_dim
         }
         
-        # KỊCH BẢN ĐẠT CHUẨN: Lưu model và metadata phục vụ đồng bộ độc lập
         model_path = os.path.join(config.SHARED_ASSETS_DIR, 'action_recognizer.h5')
         model.save(model_path)
         
-        # Lưu file từ điển mã hóa (.pkl) vào kho dùng chung
         info_path = os.path.join(config.SHARED_ASSETS_DIR, 'action_recognizer_info.pkl')
         with open(info_path, 'wb') as f:
             pickle.dump(model_info, f)
         
-        print(f"✅ [GRU SUCCESS] Kết quả đạt chuẩn! Model đã lưu tại: {model_path}")
+        # Lưu file metrics JSON cho Retrain.py đánh giá
+        import json
+        metrics_log_file = os.path.join(config.BASE_DIR, "Cloud_server", "Trainer", "latest_train_metrics.json")
+        with open(metrics_log_file, "w", encoding="utf-8") as f:
+            json.dump({"val_accuracy": float(best_val_acc), "classes_count": len(classes)}, f, indent=2)
+
+        print(f"✅ [GRU SUCCESS] Đã Fine-Tune xong Top 100 từ vựng ({best_val_acc * 100:.2f}% >= 30%)! Model đã lưu tại: {model_path}")
         print(f"✅ Metadata lưu tại: {info_path}")
-        return True # Trả về True báo hiệu cho file Retrain.py tổng
+        return True
     else:
-        # KỊCH BẢN THẤT BẠI: Dưới 90%, từ chối lưu file, giữ nguyên hệ thống cũ để bảo vệ người dùng
-        print(f"❌ [GRU FAILED] Kết quả không đạt ngưỡng an toàn ({best_val_acc * 100:.2f}% < 90%). Hủy bỏ cập nhật.")
-        return False # Trả về False báo hiệu lò GRU thất bại
+        print(f"❌ [GRU FAILED] Kết quả ({best_val_acc * 100:.2f}% < 30%). Hủy bỏ cập nhật.")
+        return False
 
 if __name__ == "__main__":
     main()

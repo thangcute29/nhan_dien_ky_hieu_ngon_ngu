@@ -23,9 +23,15 @@ venv.bak/
 Research_and_Data/Dataset/
 Cloud_server/Trainer/runs/
 YOLOv8/
+runs/
+temp_edge.mp4
+*.npy
+*.onnx
+hand_det_yolo_saved_model/
 
 # IDEs and OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+

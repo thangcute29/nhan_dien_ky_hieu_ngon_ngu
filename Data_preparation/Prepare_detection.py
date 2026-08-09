@@ -9,11 +9,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import config
 
 try:
-    import mediapipe as mp
+    from mediapipe.python.solutions import hands as mp_hands
 except ImportError:
     print("Đang cài đặt thư viện MediaPipe để tạo nhãn tự động...")
     os.system("pip install mediapipe opencv-python")
-    import mediapipe as mp
+    from mediapipe.python.solutions import hands as mp_hands
 
 def get_hand_bounding_box(image_path, hands_detector):
     """Sử dụng MediaPipe để tìm khung bao quanh bàn tay trong ảnh."""
@@ -61,8 +61,7 @@ def get_hand_bounding_box(image_path, hands_detector):
 def main():
     print("=== Chuẩn bị dữ liệu Detection (Hands and Palm) với Auto-labeling ===")
     
-    # Khởi tạo MediaPipe Hands
-    mp_hands = mp.solutions.hands
+    # Khởi tạo MediaPipe Hands trực tiếp từ mp_hands
     # min_detection_confidence thấp một chút để đảm bảo bắt được nhiều ảnh tay nhất có thể
     hands_detector = mp_hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3)
     

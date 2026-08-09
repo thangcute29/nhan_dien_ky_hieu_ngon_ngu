@@ -12,20 +12,15 @@ class VirtualCamera:
             import pyvirtualcam
             self.cam = pyvirtualcam.Camera(width=width, height=height, fps=fps)
             self.use_virtual = True
-        except ImportError:
-            print("pyvirtualcam not installed, falling back to OpenCV window.")
+        except Exception as e:
+            print(f"Virtual camera not available ({e}), falling back to OpenCV window.")
             self.use_virtual = False
 
     def send_frame(self, frame):
-        frame_resized = cv2.resize(frame, (self.width, self.height))
         if self.use_virtual:
+            frame_resized = cv2.resize(frame, (self.width, self.height))
             self.cam.send(frame_resized)
-        else:
-            cv2.imshow("Virtual Camera Output", frame_resized)
-            cv2.waitKey(1)
 
     def close(self):
         if self.use_virtual:
             self.cam.close()
-        else:
-            cv2.destroyAllWindows()

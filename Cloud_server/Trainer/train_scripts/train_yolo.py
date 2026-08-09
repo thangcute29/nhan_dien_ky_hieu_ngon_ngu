@@ -9,7 +9,6 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 import config
 from ultralytics import YOLO
-from tensorflow.keras.callbacks import EarlyStopping
 
 def main():
     print("=== Huấn luyện YOLOv8 phát hiện bàn tay ===")
@@ -40,8 +39,11 @@ def main():
         imgsz=640,
         batch=16,
         device='cuda' if os.system('nvidia-smi') == 0 else 'cpu',
-        workers=4,
-        project="Cloud_server/Trainer/runs",
+        workers=2,
+        cache=False,
+        # Dùng đường dẫn TUYỆT ĐỐI neo theo config.PROJECT_ROOT, không phụ thuộc
+        # vào thư mục làm việc (cwd) lúc chạy script -> luôn khớp với convert_to_mobile.py
+        project=os.path.join(config.PROJECT_ROOT, "Cloud_server", "Trainer", "runs"),
         name="yolo_hands",
         exist_ok=True,
         patience=5, #chốt chặn sớm nếu không cải thiện để tránh overfitting

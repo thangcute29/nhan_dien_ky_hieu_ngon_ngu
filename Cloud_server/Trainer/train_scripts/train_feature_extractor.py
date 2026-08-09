@@ -8,14 +8,15 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 import config
 import tensorflow as tf
-from tensorflow.keras import layers, models
-from tensorflow.keras.applications import EfficientNetB0
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
-from tensorflow.keras.applications.efficientnet import preprocess_input
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
+import tf_keras as keras
+from tf_keras import layers, models
+from tf_keras.applications import EfficientNetB0
+from tf_keras.preprocessing.image import ImageDataGenerator
+from tf_keras.callbacks import EarlyStopping, ModelCheckpoint
+from tf_keras.applications.efficientnet import preprocess_input
+from tf_keras.layers import Dense, GlobalAveragePooling2D
+from tf_keras.models import Model
+from tf_keras.optimizers import Adam
 
 def main():
     print("=== Huấn luyện EfficientNet phân loại chữ cái ===")
@@ -125,7 +126,7 @@ def main():
     checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint_epoch_{epoch:02d}.h5')
     
     # BỘ LƯU TRỌNG SỐ ĐỊNH KỲ VÀ GHI TIẾN TRÌNH TỰ VIẾT (VÁ LỖI KERAS)
-    class SmartProgressCallback(tf.keras.callbacks.Callback):
+    class SmartProgressCallback(keras.callbacks.Callback):
         def __init__(self, last_file, epoch_file, checkpoint_fmt, period=5):
             super().__init__()
             self.last_file = last_file

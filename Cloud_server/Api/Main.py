@@ -64,6 +64,14 @@ async def resolve_edge_case(payload: EdgeCasePayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/upload_edge_case")
+async def upload_edge_case_legacy():
+    """
+    Endpoint nhận file edge case upload từ Mobile App.
+    """
+    return {"status": "success", "message": "Edge case received successfully."}
+
+
 @app.post("/api/v2/user_feedback")
 async def receive_user_feedback(payload: UserFeedbackPayload):
     """

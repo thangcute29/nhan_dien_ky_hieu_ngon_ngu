@@ -1,0 +1,14 @@
+{
+  "latest": "1.0.1",
+  "history": [
+    {
+      "version": "1.0.1",
+      "timestamp": "2026-08-07T14:59:46.371062",
+      "models": {
+        "yolo": "d:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.1\\hand_det_yolo.pt",
+        "feature": "d:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.1\\feature_extractor.h5",
+        "gru": "d:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.1\\action_recognizer.h5"
+      }
+    }
+  ]
+}
