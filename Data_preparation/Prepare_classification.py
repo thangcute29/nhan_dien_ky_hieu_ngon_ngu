@@ -15,7 +15,7 @@ def main():
     os.makedirs(config.CLASSIFICATION_DIR, exist_ok=True)
     os.makedirs(config.CLASSIFICATION_IMAGES_DIR, exist_ok=True)
     
-    # KỊCH BẢN A: Đã có sẵn tập Classification train.csv và val.csv
+    # KỊCH BẢN A: Đã có sẵn tập Classification train.csv và val.csv chuẩn
     if os.path.exists(config.CLASSIFICATION_TRAIN_CSV) and os.path.exists(config.CLASSIFICATION_VAL_CSV):
         train_df_exist = pd.read_csv(config.CLASSIFICATION_TRAIN_CSV)
         val_df_exist = pd.read_csv(config.CLASSIFICATION_VAL_CSV)
@@ -23,12 +23,17 @@ def main():
         print("✅ DỮ LIỆU CLASSIFICATION ĐÃ SẴN SÀNG TRAIN!")
         return
 
-    # KỊCH BẢN B: Tạo từ dữ liệu thô cũ
-    source_csv = getattr(config, 'DETECTION_CSV', os.path.join(config.RESEARCH_DATA_DIR, 'Classification', 'Old_Detection_Data', 'HandInfo.csv'))
-    if not os.path.exists(source_csv):
-        print(f"Lỗi: Không tìm thấy file CSV nguồn tại {source_csv}")
+    # KỊCH BẢN B: Tự động quét bất kỳ file CSV mới nào được nạp vào thư mục Classification
+    import glob
+    csv_candidates = glob.glob(os.path.join(config.CLASSIFICATION_DIR, "*.csv"))
+    csv_candidates = [c for c in csv_candidates if not c.endswith("train.csv") and not c.endswith("val.csv")]
+
+    if not csv_candidates:
+        print(f"❌ Không tìm thấy file nhãn CSV mới nào trong thư mục: {config.CLASSIFICATION_DIR}")
         return
-        
+
+    source_csv = csv_candidates[0]
+    print(f"📂 [ADAPTER] Đang tự động quét và phân tích file nhãn mới: {os.path.basename(source_csv)}...")
     df = pd.read_csv(source_csv)
     print(f"Tổng số dòng ban đầu trong CSV: {len(df)}")
     

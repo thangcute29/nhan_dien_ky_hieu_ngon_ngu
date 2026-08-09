@@ -117,15 +117,15 @@ def main():
         print("🚀 Khởi chạy train: python Cloud_server/Trainer/train_scripts/train_yolo.py")
         return
 
-    # KỊCH BẢN B: Dữ liệu ảnh thô chưa gán nhãn + CSV cũ
-    print("🟡 [ADAPTER] Phát hiện dữ liệu thô. Chạy quy trình MediaPipe Auto-labeling...")
-    detection_csv = getattr(config, 'DETECTION_CSV', os.path.join(det_dir, 'HandInfo.csv'))
-    detection_img_dir = getattr(config, 'DETECTION_IMAGES_DIR', os.path.join(det_dir, 'Hands', 'Hands'))
-    
-    if not os.path.exists(detection_csv):
-        print(f"❌ Không tìm thấy file CSV tại: {detection_csv}")
+    # KỊCH BẢN B: Dữ liệu ảnh thô mới chưa gán nhãn + CSV mới bất kỳ
+    print("🟡 [ADAPTER] Quét tự động dữ liệu thô mới trong thư mục Detection...")
+    csv_files = glob.glob(os.path.join(det_dir, "*.csv"))
+    if not csv_files:
+        print(f"❌ Không tìm thấy file nhãn CSV nào trong thư mục: {det_dir}")
         return
 
+    detection_csv = csv_files[0]
+    print(f"📂 [ADAPTER] Tự động đọc file nhãn thô mới: {os.path.basename(detection_csv)}")
     hands_detector = mp_hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3)
     df = pd.read_csv(detection_csv)
     print(f"Tổng số dòng trong CSV: {len(df)}")
