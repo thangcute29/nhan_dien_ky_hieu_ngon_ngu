@@ -48,26 +48,33 @@ class ContextAgent:
         if not action_word:
             return ""
 
-        word_lower = action_word.lower()
+        import config
 
-        # Dịch từ điển theo ngôn ngữ đích được chọn
-        translated = word_lower
-        if target_lang == 'vi':
-            translated = VI_DICTIONARY.get(word_lower, action_word)
-        elif target_lang == 'ja':
-            translated = JA_DICTIONARY.get(word_lower, action_word)
-        elif target_lang == 'ko':
-            translated = KO_DICTIONARY.get(word_lower, action_word)
-        else:
-            translated = action_word
+        # SỰ CỐ 4 FIX: Tách chuỗi từ vựng (ví dụ: "apple mother" -> ["apple", "mother"])
+        words = action_word.lower().split()
+        translated_words = []
 
-        # Nếu có LLM Corrector, thử đưa qua LLM để sửa lỗi ngữ cảnh sâu hơn
-        if self.llm_corrector and hasattr(self.llm_corrector, 'correct'):
+        for w in words:
+            if target_lang == 'vi':
+                translated_words.append(VI_DICTIONARY.get(w, w))
+            elif target_lang == 'ja':
+                translated_words.append(JA_DICTIONARY.get(w, w))
+            elif target_lang == 'ko':
+                translated_words.append(KO_DICTIONARY.get(w, w))
+            else:
+                translated_words.append(w)
+
+        final_str = " ".join(translated_words)
+
+        # Chỉ gọi LLM khi API Key hợp lệ (không phải key mẫu "AIzaSy...")
+        api_key = getattr(config, 'LLM_API_KEY', '')
+        if self.llm_corrector and hasattr(self.llm_corrector, 'correct') and api_key and not api_key.startswith("AIzaSy..."):
             try:
-                llm_out = self.llm_corrector.correct(translated)
+                llm_out = self.llm_corrector.correct(final_str)
                 if llm_out:
                     return llm_out
             except Exception:
                 pass
 
-        return translated
+        return final_str # Trả về bản dịch Tiếng Việt Offline mượt mà & chính xác!
+

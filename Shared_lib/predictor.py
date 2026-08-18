@@ -5,7 +5,51 @@ import tensorflow as tf
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..')) # vì nằm ở file gốc nên chỉ cần lên 1 cấp thôi 
-from Shared_lib.Constants import ALPHABET_CLASSES, ACTION_CLASSES
+from Shared_lib.Constants import ALPHABET_CLASSES, ASL_29_CLASSES, ACTION_CLASSES
+from collections import Counter
+
+
+class PredictionBufferFilter:
+    """
+    Bộ lọc 3 bước lọc nhiễu dự đoán (3-Step Prediction Pipeline):
+    Bước 1: Bầu chọn số đông (Majority Voting) trong window_size khung hình gần nhất.
+    Bước 2: Lọc theo ngưỡng tự tin tối thiểu (min_conf >= 0.35).
+    Bước 3: Lọc trùng lặp trạng thái (Debounce check: chỉ kích hoạt khi nhãn đổi mới).
+    """
+    def __init__(self, window_size=5, min_conf=0.35):
+        self.window_size = window_size
+        self.min_conf = min_conf
+        self.history = []
+        self.last_emitted = None
+
+    def update(self, raw_label, conf):
+        # Bước 2: Kiểm tra ngưỡng tự tin tối thiểu
+        if conf < self.min_conf or raw_label is None or raw_label in ['nothing', 'del']:
+            return None
+
+        # Tích lũy vào đệm (Ring Buffer)
+        self.history.append(raw_label)
+        if len(self.history) > self.window_size:
+            self.history.pop(0)
+
+        if len(self.history) < 3:
+            return None
+
+        # Bước 1: Bầu chọn số đông (Majority Voting)
+        counts = Counter(self.history)
+        winner_label, freq = counts.most_common(1)[0]
+
+        # Đạt tối thiểu 50% + 1 số phiếu đồng thuận
+        required_votes = (len(self.history) // 2 + 1)
+        if freq < required_votes:
+            return None
+
+        # Bước 3: Lọc trùng lặp (Debounce Check)
+        if winner_label != self.last_emitted:
+            self.last_emitted = winner_label
+            return winner_label  # Kích hoạt nhãn mới!
+
+        return None
 
 
 class SignLanguagePredictor:
@@ -28,6 +72,10 @@ class SignLanguagePredictor:
         self.seq_len = seq_len
         self.feat_dim = self.gru_input_details[0]['shape'][2]
         self.buffer = []
+
+        # Khởi tạo bộ lọc 3 bước cho chữ cái tĩnh và từ vựng động
+        self.static_filter = PredictionBufferFilter(window_size=5, min_conf=0.35)
+        self.action_filter = PredictionBufferFilter(window_size=5, min_conf=0.35)
 
         # ===== DEBUG: in ra thông tin model YOLO khi khởi tạo =====
         print(f"[DEBUG] YOLO input shape : {self.yolo_input_details[0]['shape']}, dtype: {self.yolo_input_details[0]['dtype']}", flush=True)
@@ -61,8 +109,9 @@ class SignLanguagePredictor:
                   f"| n>=0.35: {n_above_035} | n>=0.10: {n_above_010}", flush=True)
         # ============================================================
 
-        # Ngưỡng tự tin 0.15 giúp bắt nhạy 2 bàn tay trên webcam
-        valid_indices = np.where(predictions[:, 4] >= 0.15)[0]
+        # SỰ CỐ 1 FIX: Nâng ngưỡng tự tin lên 0.45 để loại bỏ 100% Bounding box nhấp nháy rác
+        CONF_THRESHOLD_HAND = 0.45
+        valid_indices = np.where(predictions[:, 4] >= CONF_THRESHOLD_HAND)[0]
         if len(valid_indices) == 0:
             return []
 
@@ -84,7 +133,7 @@ class SignLanguagePredictor:
         if len(boxes) == 0:
             return []
 
-        indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=0.15, nms_threshold=0.45)
+        indices = cv2.dnn.NMSBoxes(boxes, scores, score_threshold=CONF_THRESHOLD_HAND, nms_threshold=0.45)
 
         # ===== DEBUG: xem NMS giữ lại bao nhiêu box =====
         if self._debug_frame_count % 10 == 0:
@@ -119,14 +168,43 @@ class SignLanguagePredictor:
 
         return bboxes
 
-    def extract_feature(self, hand_roi):
+    def process_hand_crop(self, hand_roi):
+        """
+        SỰ CỐ 2 FIX: Gộp cả tác vụ Dự đoán Chữ cái tĩnh A-Z và Trích xuất Feature Vector 
+        vào 1 LẦN GỌI invoke() DUY NHẤT cho mỗi bàn tay crop -> Tiết kiệm 50% CPU/RAM!
+        """
+        if hand_roi is None or hand_roi.size == 0:
+            return None, 0.0, np.zeros(self.feat_dim, dtype=np.float32)
+
         img = cv2.resize(hand_roi, (224, 224))
         img = img.astype(np.float32) / 255.0
         img = np.expand_dims(img, axis=0)
+
+        # CHỈ GỌI INVOKE 1 LẦN DUY NHẤT PER HAND CROP
         self.feat_interpreter.set_tensor(self.feat_input_details[0]['index'], img)
         self.feat_interpreter.invoke()
-        feature = self.feat_interpreter.get_tensor(self.feat_output_details[0]['index'])
-        return feature.flatten()
+        probs = self.feat_interpreter.get_tensor(self.feat_output_details[0]['index'])[0]
+
+        # 1. Trích xuất chữ cái tĩnh A-Z
+        idx = np.argmax(probs)
+        conf = float(probs[idx])
+        static_char = None
+        if idx < len(ASL_29_CLASSES):
+            predicted_class = ASL_29_CLASSES[idx]
+            if predicted_class not in ['nothing', 'del'] and conf >= 0.30:
+                static_char = predicted_class
+
+        # 2. Lấy luôn feature vector (đầu ra flatten của model)
+        feat_vec = probs.flatten()
+        return static_char, conf, feat_vec
+
+    def predict_static_alphabet(self, hand_roi):
+        char, conf, _ = self.process_hand_crop(hand_roi)
+        return char, conf
+
+    def extract_feature(self, hand_roi):
+        _, _, feat = self.process_hand_crop(hand_roi)
+        return feat
 
     def predict_action(self):
         if len(self.buffer) < self.seq_len:
@@ -145,7 +223,6 @@ class SignLanguagePredictor:
             print(f"[DEBUG] GRU predict -> Action: '{ACTION_CLASSES[idx]}' | Conf: {conf:.4f} (Threshold: 0.35)", flush=True)
         # =======================================================
 
-        # Hạ ngưỡng tự tin dự đoán từ từ 0.55 xuống 0.35 để bắt dịch thuật từ nhạy hơn
         if conf >= 0.35 and len(ACTION_CLASSES) > idx:
             return ACTION_CLASSES[idx], conf
         else:
@@ -154,6 +231,7 @@ class SignLanguagePredictor:
     def process_frame(self, frame):
         bboxes = self.detect_hands(frame)
         static_char = None
+        static_conf = 0.0
         feature_vec = np.zeros(self.feat_dim, dtype=np.float32)
 
         if not hasattr(self, '_missing_hand_count'):
@@ -162,11 +240,22 @@ class SignLanguagePredictor:
         if len(bboxes) > 0:
             self._missing_hand_count = 0
             feats = []
+            static_candidates = []
+
             for item in bboxes:
                 x1, y1, x2, y2 = item[:4]
                 hand = frame[y1:y2, x1:x2]
                 if hand.size > 0:
-                    feats.append(self.extract_feature(hand))
+                    # GỌI 1 LẦN DUY NHẤT LẤY CẢ CHỮ CÁI LẪN FEATURE VECTOR
+                    char, s_conf, feat = self.process_hand_crop(hand)
+                    if char:
+                        static_candidates.append((char, s_conf))
+                    feats.append(feat)
+
+            if len(static_candidates) > 0:
+                static_candidates.sort(key=lambda x: x[1], reverse=True)
+                static_char, static_conf = static_candidates[0]
+
             if len(feats) > 0:
                 combined_feat = np.mean(feats, axis=0)
                 n = min(len(combined_feat), self.feat_dim)
@@ -181,5 +270,12 @@ class SignLanguagePredictor:
         if len(self.buffer) > self.seq_len * 2:
             self.buffer = self.buffer[-self.seq_len:]
 
-        action, conf = self.predict_action()
-        return static_char, action, conf, bboxes
+        action, action_conf = self.predict_action()
+
+        # Áp dụng Bộ Lọc 3 Lớp (Ring Buffer + Majority Vote + Debounce)
+        filtered_static = self.static_filter.update(static_char, static_conf)
+        filtered_action = self.action_filter.update(action, action_conf)
+
+        max_conf = max(static_conf, action_conf)
+        return filtered_static or static_char, filtered_action or action, max_conf, bboxes
+

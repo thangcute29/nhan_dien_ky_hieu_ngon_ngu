@@ -11,6 +11,7 @@ CHỈ trả về từ/cụm từ đã được sửa, KHÔNG giải thích gì t
 """
 
 ALPHABET_CLASSES = [chr(i) for i in range(ord('A'), ord('Z') + 1)]
+ASL_29_CLASSES = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'del', 'nothing', 'space']
 
 _INFO_PKL_PATH = os.path.join(os.path.dirname(__file__), "Assets", "action_recognizer_info.pkl")
 if os.path.exists(_INFO_PKL_PATH):
@@ -21,4 +22,5 @@ if os.path.exists(_INFO_PKL_PATH):
     except Exception:
         ACTION_CLASSES = []
 else:
-    ACTION_CLASSES = []
+    ACTION_CLASSES = []
+

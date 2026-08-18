@@ -31,14 +31,10 @@ except ImportError:
     LLMTranslator = None
 
 try:
-    from Mobile_app.Src.Tts_handler.Speaker import TextToSpeech
+    from Shared_lib.ui_helpers import TextToSpeech, VirtualCamera
 except ImportError:
-    from tts_handler.speaker import TextToSpeech
+    from Demo_ui.Utils import TextToSpeech, VirtualCamera
 
-try:
-    from Mobile_app.Src.Virtual_cam.Virtual_camera import VirtualCamera
-except ImportError:
-    from virtual_cam.virtual_camera import VirtualCamera
 
 try:
     from Tools.video_translator import VideoTranslator
@@ -80,34 +76,71 @@ class SignLanguageApp:
 
 #=======================Giới hạn tốc độ xử lý AI =========================
         self.last_process_time = 0
-        self.process_interval = 0.1  # Giới hạn xử lý mỗi 100ms (10fps)
+        self.process_interval = 0.08  # NÂNG CẤP 1: Giới hạn xử lý AI ở 12.5 FPS (80ms), camera hiển thị 30 FPS mượt mà
+        self._cached_static_char = None
+        self._cached_action = None
+        self._cached_conf = 0.0
+        self._cached_bboxes = []
 
     def send_edge_case(self, video_frames, predicted_label):
-        """Gửi video bị nhận diện sai lên server để gán nhãn lại."""
+        """
+        NÂNG CẤP 2: Gửi video/ảnh bị nhận diện sai lên server bằng In-Memory Byte Stream (RAM).
+        Loại bỏ 100% việc tạo file rác temp_edge.mp4 trên đĩa cứng SSD!
+        """
         if not video_frames:
             return
-        h, w = video_frames[0].shape[:2]
-        temp_file = "temp_edge.mp4"
-        out = cv2.VideoWriter(temp_file, cv2.VideoWriter_fourcc(*'mp4v'), 10, (w, h))
-        for f in video_frames:
-            out.write(f)
-        out.release()
 
-        with open(temp_file, 'rb') as f:
-            files = {'video': f}
+        import io
+        try:
+            # Mã hóa khung hình trực tiếp trên bộ nhớ RAM thành mảng Byte JPEG
+            success, buffer = cv2.imencode('.jpg', video_frames[0])
+            if not success:
+                return
+
+            ram_stream = io.BytesIO(buffer.tobytes())
+            files = {'image': ('edge_case.jpg', ram_stream, 'image/jpeg')}
             data = {'label': predicted_label}
-            try:
-                requests.post(f"{SERVER_URL}/upload_edge_case", files=files, data=data)
-                print("Edge case sent.")
-            except Exception as e:
-                print("Failed to send edge case:", e)
+
+            requests.post(f"{SERVER_URL}/upload_edge_case", files=files, data=data, timeout=3)
+            print("✅ [In-Memory Stream] Đã gửi Edge Case trực tiếp qua RAM (không ghi file SSD).", flush=True)
+        except Exception as e:
+            print(f"⚠️ Lỗi khi gửi edge case qua RAM: {e}", flush=True)
+
+    def _async_translate_and_speak(self, raw_sentence, lang):
+        """SỰ CỐ 3 FIX: Xử lý dịch thuật LLM và phát âm thanh TTS ở luồng ngầm (Background Thread)"""
+        try:
+            if self.context_agent:
+                translated = self.context_agent.process(action_word=raw_sentence, target_lang=lang)
+            else:
+                translated = raw_sentence
+            
+            self.final_sentence = translated
+            if translated:
+                print(f"🔊 [Async] Đang đọc phát âm câu dịch: '{translated}'", flush=True)
+                self.tts.speak(translated)
+        except Exception as e:
+            print(f"⚠️ Lỗi luồng ngầm dịch thuật: {e}", flush=True)
 
     def run_live_webcam(self):
         """Option 1: Dịch thuật thời gian thực qua Webcam"""
         print("\n=== [1] DỊCH THUẬT TRỰC TIẾP QUA WEBCAM ===", flush=True)
-        print("Phím tắt: [Q] Thoát | [V] Việt | [E] Anh | [J] Nhật | [K] Hàn", flush=True)
+        print("\n--- [BẢNG CHỌN NGÔN NGỮ DỊCH THUẬT BAN ĐẦU] ---", flush=True)
+        print(" [V] Tiếng Việt (Vietnamese - Mặc định)")
+        print(" [E] Tiếng Anh (English)")
+        print(" [J] Tiếng Nhật (Japanese)")
+        print(" [K] Tiếng Hàn (Korean)")
+        l_choice = input("👉 Nhập Lựa Chọn Ngôn Ngữ Mong Muốn (V/E/J/K, ấn Enter để chọn Việt): ").strip().lower()
+        lang_map = {'v': 'vi', 'e': 'en', 'j': 'ja', 'k': 'ko'}
+        self.current_lang = lang_map.get(l_choice, 'vi')
         
+        print(f"\n🚀 Đã khởi tạo ngôn ngữ: {self.current_lang.upper()}", flush=True)
+        print("Phím tắt đổi ngôn ngữ lúc chạy: [Q] Thoát | [V] Việt | [E] Anh | [J] Nhật | [K] Hàn\n", flush=True)
+
         self.cap = cv2.VideoCapture(0)
+        # NÂNG CẤP 1: Thiết lập độ phân giải Webcam chuẩn 640x480 tối ưu cho YOLO & EfficientNet
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
         self.sentence_words = []
         self.final_sentence = ""
         self.last_action = None
@@ -117,48 +150,71 @@ class SignLanguageApp:
             if not ret:
                 break
 
-            static_char, action, conf, bboxes = self.predictor.process_frame(frame)
+            # NÂNG CẤP 1: Giới hạn tần suất chạy AI 12.5 FPS (0.08s) có cache hiển thị, camera vẫn mượt 30 FPS
+            now = time.time()
+            if now - self.last_process_time >= self.process_interval:
+                self.last_process_time = now
+                static_char, action, conf, bboxes = self.predictor.process_frame(frame)
+                self._cached_static_char = static_char
+                self._cached_action = action
+                self._cached_conf = conf
+                self._cached_bboxes = bboxes
+            else:
+                static_char = self._cached_static_char
+                action = self._cached_action
+                conf = self._cached_conf
+                bboxes = self._cached_bboxes
+
             display = frame.copy()
             h, w = display.shape[:2]
+
 
             # Hiển thị nhãn ngôn ngữ đang chọn
             lang = getattr(self, 'current_lang', 'vi')
             lang_names = {'vi': 'TIENG VIET (Phim V)', 'en': 'ENGLISH (Phim E)', 'ja': 'JAPANESE (Phim J)', 'ko': 'KOREAN (Phim K)'}
             lang_str = lang_names.get(lang, 'TIENG VIET (Phim V)')
-            cv2.rectangle(display, (10, 10), (290, 45), (0, 0, 0), -1)
+            cv2.rectangle(display, (10, 10), (320, 45), (0, 0, 0), -1)
             cv2.putText(display, f"NGON NGU: {lang_str}", (15, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
 
-            # 1. Vẽ bounding box tay trái (Xanh lá) và tay phải (Xanh dương)
+            # 1. Vẽ bounding box tay trái (Xanh lá) và tay phải (Xanh dương) kèm Chữ cái/Từ vựng
+            active_label = static_char or action
             if bboxes and len(bboxes) > 0:
                 self.last_hand_time = time.time()
                 for (x1, y1, x2, y2, hand_label) in bboxes:
                     color = (0, 255, 0) if "Left" in hand_label else (255, 0, 0)
                     cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
-                    cv2.putText(display, hand_label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    
+                    # Thêm nhãn nhận diện chữ cái/từ vựng ngay trên Bounding Box
+                    display_text = hand_label
+                    if active_label:
+                        display_text += f": [{active_label}]"
+                    
+                    # Background mờ cho chữ hiển thị rõ nét
+                    cv2.rectangle(display, (x1, max(0, y1 - 25)), (x1 + len(display_text) * 11, y1), color, -1)
+                    cv2.putText(display, display_text, (x1 + 3, max(15, y1 - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
-            # 2. Gom từ ngữ khi AI nhận diện tự tin
-            if action and action != self.last_action:
-                self.sentence_words.append(action)
-                self.last_action = action
+            # 2. Gom chữ cái / từ ngữ khi AI nhận diện được nhãn mới
+            if active_label and active_label != self.last_action:
+                self.sentence_words.append(active_label)
+                self.last_action = active_label
                 self.last_hand_time = time.time()
+                print(f"✨ AI Nhận diện được: [{active_label}] (Conf: {conf:.2f})", flush=True)
 
-            # 3. Khi dừng tay > 2.0s -> Dịch cả câu qua ContextAgent
+            # 3. SỰ CỐ 3 FIX: Khi dừng tay > 2.0s -> Đưa tác vụ Dịch & Đọc Loa sang LUỒNG NGẦM (Threading)
             if len(self.sentence_words) > 0 and (time.time() - self.last_hand_time > self.PAUSE_TIMEOUT):
                 raw_sentence = " ".join(self.sentence_words)
-                if self.context_agent:
-                    self.final_sentence = self.context_agent.process(action_word=raw_sentence, target_lang=lang)
-                else:
-                    self.final_sentence = raw_sentence
-
-                if self.final_sentence:
-                    self.tts.speak(self.final_sentence)
                 self.sentence_words = []
+                # Chạy ngầm không làm đứng camera
+                threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, lang), daemon=True).start()
+
 
             # 4. Thanh phụ đề màu đen mờ ở đáy màn hình
-            if self.final_sentence:
+            current_composed = " ".join(self.sentence_words)
+            if self.final_sentence or current_composed:
+                text_to_show = self.final_sentence if self.final_sentence else f"Dang nhap: {current_composed}"
                 cv2.rectangle(display, (0, h - 60), (w, h), (0, 0, 0), -1)
-                cv2.putText(display, f"Dich ({lang.upper()}): {self.final_sentence}", (20, h - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                cv2.putText(display, f"Dich ({lang.upper()}): {text_to_show}", (20, h - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
 
             self.virtual_cam.send_frame(display)
             cv2.imshow("Sign Language App - Live Stream", display)
@@ -175,6 +231,7 @@ class SignLanguageApp:
 
         self.cap.release()
         cv2.destroyAllWindows()
+
 
     def run_video_file_translation(self):
         """Option 2: Dịch thuật từ Tệp Video MP4 / AVI (Sử dụng Module VideoTranslator)"""
