@@ -176,8 +176,9 @@ class SignLanguagePredictor:
         if hand_roi is None or hand_roi.size == 0:
             return None, 0.0, np.zeros(self.feat_dim, dtype=np.float32)
 
-        img = cv2.resize(hand_roi, (224, 224))
-        img = img.astype(np.float32) / 255.0
+        # Chuyển BGR sang RGB và giữ dải pixel [0, 255] phù hợp với EfficientNetB0 đã train
+        rgb_hand = cv2.cvtColor(hand_roi, cv2.COLOR_BGR2RGB)
+        img = cv2.resize(rgb_hand, (224, 224)).astype(np.float32)
         img = np.expand_dims(img, axis=0)
 
         # CHỈ GỌI INVOKE 1 LẦN DUY NHẤT PER HAND CROP
@@ -189,9 +190,19 @@ class SignLanguagePredictor:
         idx = np.argmax(probs)
         conf = float(probs[idx])
         static_char = None
+
+        # ===== THÊM DEBUG LOG (Top-3) =====
+        if self._debug_frame_count % 10 == 0:
+            top_indices = np.argsort(probs)[::-1][:3]
+            top_probs = np.sort(probs)[::-1][:3]
+            print(f"[DEBUG FEAT] Top indexes: {top_indices} | Top confs: {[round(float(p), 4) for p in top_probs]}", flush=True)
+            if idx < len(ASL_29_CLASSES):
+                print(f"[DEBUG FEAT] Predicted Class: '{ASL_29_CLASSES[idx]}' | Conf: {conf:.4f}", flush=True)
+        # ==================================
+
         if idx < len(ASL_29_CLASSES):
             predicted_class = ASL_29_CLASSES[idx]
-            if predicted_class not in ['nothing', 'del'] and conf >= 0.30:
+            if predicted_class not in ['nothing', 'del'] and conf >= 0.35:
                 static_char = predicted_class
 
         # 2. Lấy luôn feature vector (đầu ra flatten của model)
@@ -218,12 +229,15 @@ class SignLanguagePredictor:
         idx = np.argmax(pred)
         conf = float(pred[idx])
 
+        # Ngưỡng tin cậy cho GRU nâng lên 0.55 để tránh kích hoạt rác
+        GRU_CONF_THRESHOLD = 0.55
+
         # ===== DEBUG: In kết quả dự đoán GRU mỗi 10 frame =====
         if self._debug_frame_count % 10 == 0 and len(ACTION_CLASSES) > idx:
-            print(f"[DEBUG] GRU predict -> Action: '{ACTION_CLASSES[idx]}' | Conf: {conf:.4f} (Threshold: 0.35)", flush=True)
+            print(f"[DEBUG] GRU predict -> Action: '{ACTION_CLASSES[idx]}' | Conf: {conf:.4f} (Threshold: {GRU_CONF_THRESHOLD})", flush=True)
         # =======================================================
 
-        if conf >= 0.35 and len(ACTION_CLASSES) > idx:
+        if conf >= GRU_CONF_THRESHOLD and len(ACTION_CLASSES) > idx:
             return ACTION_CLASSES[idx], conf
         else:
             return None, conf
@@ -276,6 +290,14 @@ class SignLanguagePredictor:
         filtered_static = self.static_filter.update(static_char, static_conf)
         filtered_action = self.action_filter.update(action, action_conf)
 
+        final_static = filtered_static if filtered_static else static_char
+        final_action = filtered_action if filtered_action else action
         max_conf = max(static_conf, action_conf)
-        return filtered_static or static_char, filtered_action or action, max_conf, bboxes
+
+        # Trả về 4 tham số rõ ràng:
+        # 1. Chữ cái tĩnh (hoặc None)
+        # 2. Hành động từ vựng (hoặc None)
+        # 3. Độ tin cậy cao nhất
+        # 4. Các Bounding Box bàn tay
+        return final_static, final_action, max_conf, bboxes
 

@@ -56,6 +56,7 @@ class SignLanguageApp:
         self.tts = TextToSpeech()
         self.virtual_cam = VirtualCamera()
         self.cap = cv2.VideoCapture(0)
+        self.tts_enabled = True  # Cờ Bật / Tắt âm thanh loa đọc phát âm
 
 #=======================khởi tạo LLMCorrector và ContextAgent========================
         self.llm_corrector = LLMCorrector() if LLMCorrector else None
@@ -116,8 +117,11 @@ class SignLanguageApp:
             
             self.final_sentence = translated
             if translated:
-                print(f"🔊 [Async] Đang đọc phát âm câu dịch: '{translated}'", flush=True)
-                self.tts.speak(translated)
+                if self.tts_enabled:
+                    print(f"🔊 [Async] Đang đọc phát âm câu dịch: '{translated}'", flush=True)
+                    self.tts.speak(translated)
+                else:
+                    print(f"🔇 [Loa TẮT] Đã dịch: '{translated}' (Không phát âm thanh)", flush=True)
         except Exception as e:
             print(f"⚠️ Lỗi luồng ngầm dịch thuật: {e}", flush=True)
 
@@ -134,16 +138,19 @@ class SignLanguageApp:
         self.current_lang = lang_map.get(l_choice, 'vi')
         
         print(f"\n🚀 Đã khởi tạo ngôn ngữ: {self.current_lang.upper()}", flush=True)
-        print("Phím tắt đổi ngôn ngữ lúc chạy: [Q] Thoát | [V] Việt | [E] Anh | [J] Nhật | [K] Hàn\n", flush=True)
+        print("Phím tắt điều khiển: [Q] Thoát | [M] Bật/Tắt Loa | [V] Việt | [E] Anh | [J] Nhật | [K] Hàn\n", flush=True)
 
         self.cap = cv2.VideoCapture(0)
         # NÂNG CẤP 1: Thiết lập độ phân giải Webcam chuẩn 640x480 tối ưu cho YOLO & EfficientNet
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-        self.sentence_words = []
+        self.spelled_chars = []
+        self.action_words = []
         self.final_sentence = ""
         self.last_action = None
+        self.tts_notification = ""
+        self.tts_notification_time = 0
 
         while True:
             ret, frame = self.cap.read()
@@ -168,13 +175,24 @@ class SignLanguageApp:
             display = frame.copy()
             h, w = display.shape[:2]
 
-
-            # Hiển thị nhãn ngôn ngữ đang chọn
+            # Hiển thị nhãn ngôn ngữ đang chọn & Trạng thái Loa
             lang = getattr(self, 'current_lang', 'vi')
             lang_names = {'vi': 'TIENG VIET (Phim V)', 'en': 'ENGLISH (Phim E)', 'ja': 'JAPANESE (Phim J)', 'ko': 'KOREAN (Phim K)'}
             lang_str = lang_names.get(lang, 'TIENG VIET (Phim V)')
             cv2.rectangle(display, (10, 10), (320, 45), (0, 0, 0), -1)
             cv2.putText(display, f"NGON NGU: {lang_str}", (15, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+
+            # Badge trạng thái Loa phát âm (Phím M)
+            speaker_status = "LOA: BAT [Phim M]" if self.tts_enabled else "LOA: TAT [Phim M]"
+            speaker_color = (0, 200, 0) if self.tts_enabled else (0, 0, 200)
+            cv2.rectangle(display, (330, 10), (510, 45), (0, 0, 0), -1)
+            cv2.putText(display, speaker_status, (335, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.50, speaker_color, 2)
+
+            # Pop-up thông báo nhanh 1.5s khi bấm phím M
+            if self.tts_notification and (time.time() - self.tts_notification_time < 1.5):
+                cv2.rectangle(display, (w // 2 - 120, 60), (w // 2 + 120, 110), (20, 20, 20), -1)
+                pop_color = (0, 255, 0) if self.tts_enabled else (0, 0, 255)
+                cv2.putText(display, self.tts_notification, (w // 2 - 95, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.8, pop_color, 2)
 
             # 1. Vẽ bounding box tay trái (Xanh lá) và tay phải (Xanh dương) kèm Chữ cái/Từ vựng
             active_label = static_char or action
@@ -193,28 +211,41 @@ class SignLanguageApp:
                     cv2.rectangle(display, (x1, max(0, y1 - 25)), (x1 + len(display_text) * 11, y1), color, -1)
                     cv2.putText(display, display_text, (x1 + 3, max(15, y1 - 7)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
 
-            # 2. Gom chữ cái / từ ngữ khi AI nhận diện được nhãn mới
+            # 2. Gom riêng Chữ cái A-Z và Từ vựng GRU (Tách 2 bộ đệm)
             if active_label and active_label != self.last_action:
-                self.sentence_words.append(active_label)
+                if len(active_label) == 1 and active_label.isalpha():
+                    self.spelled_chars.append(active_label)
+                else:
+                    self.action_words.append(active_label)
                 self.last_action = active_label
                 self.last_hand_time = time.time()
                 print(f"✨ AI Nhận diện được: [{active_label}] (Conf: {conf:.2f})", flush=True)
 
-            # 3. SỰ CỐ 3 FIX: Khi dừng tay > 2.0s -> Đưa tác vụ Dịch & Đọc Loa sang LUỒNG NGẦM (Threading)
-            if len(self.sentence_words) > 0 and (time.time() - self.last_hand_time > self.PAUSE_TIMEOUT):
-                raw_sentence = " ".join(self.sentence_words)
-                self.sentence_words = []
-                # Chạy ngầm không làm đứng camera
-                threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, lang), daemon=True).start()
+            # 3. Khi dừng tay > 2.0s -> Gửi dữ liệu đi dịch thuật (Ưu tiên Từ vựng trước, Đánh vần sau)
+            if (time.time() - self.last_hand_time > self.PAUSE_TIMEOUT):
+                if len(self.action_words) > 0:
+                    raw_sentence = " ".join(self.action_words)
+                    self.action_words = []
+                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, lang), daemon=True).start()
+                elif len(self.spelled_chars) > 0:
+                    raw_sentence = " ".join(self.spelled_chars)
+                    self.spelled_chars = []
+                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, lang), daemon=True).start()
 
+            # 4. Thanh phụ đề 2 dòng ở đáy màn hình
+            cv2.rectangle(display, (0, h - 80), (w, h), (0, 0, 0), -1)
 
-            # 4. Thanh phụ đề màu đen mờ ở đáy màn hình
-            current_composed = " ".join(self.sentence_words)
-            if self.final_sentence or current_composed:
-                text_to_show = self.final_sentence if self.final_sentence else f"Dang nhap: {current_composed}"
-                cv2.rectangle(display, (0, h - 60), (w, h), (0, 0, 0), -1)
-                cv2.putText(display, f"Dich ({lang.upper()}): {text_to_show}", (20, h - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2)
+            # Dòng trên: Dành cho Từ vựng (nếu có)
+            tu_vung_text = f"Tu vung: {' '.join(self.action_words)}" if self.action_words else "Tu vung: (Dang cho ky hieu...)"
+            # Dòng dưới: Dành cho Chữ cái (đánh vần)
+            danh_van_text = f"Danh van: {' '.join(self.spelled_chars)}"
+
+            # Nếu có kết quả dịch cuối cùng của Context Agent, hiện câu dịch đó lên
+            if self.final_sentence:
+                tu_vung_text = f"Dich ({lang.upper()}): {self.final_sentence}"
+
+            cv2.putText(display, tu_vung_text, (20, h - 50), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            cv2.putText(display, danh_van_text, (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
 
             self.virtual_cam.send_frame(display)
             cv2.imshow("Sign Language App - Live Stream", display)
@@ -222,6 +253,12 @@ class SignLanguageApp:
             key = cv2.waitKey(1) & 0xFF
             if key in (ord('q'), ord('Q')):
                 break
+            elif key in (ord('m'), ord('M')):
+                self.tts_enabled = not self.tts_enabled
+                status_str = "BẬT 🔊" if self.tts_enabled else "TẮT 🔇"
+                self.tts_notification = f"LOA: {status_str}"
+                self.tts_notification_time = time.time()
+                print(f"🔄 Đã chuyển trạng thái Loa: {status_str}", flush=True)
             elif key in (ord('v'), ord('V')): self.current_lang = 'vi'
             elif key in (ord('e'), ord('E')): self.current_lang = 'en'
             elif key in (ord('j'), ord('J')): self.current_lang = 'ja'

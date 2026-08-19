@@ -7,6 +7,7 @@ import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 import config
+from Shared_lib.Constants import ASL_29_CLASSES
 import tensorflow as tf
 import tf_keras as keras
 from tf_keras import layers, models
@@ -27,7 +28,16 @@ def main():
     print(f"-> Thư mục Train: {train_dir}")
     print(f"-> Thư mục Val: {val_dir}")
 
-    
+    # Nạp danh sách 29 chữ cái chuẩn ASL
+    classes = ASL_29_CLASSES
+    num_classes = len(classes)
+    print(f"Số lớp bắt buộc: {num_classes} - {classes}")
+
+    # Đảm bảo tạo thư mục train/val nếu chưa có đúng 29 lớp
+    for cls in classes:
+        os.makedirs(os.path.join(train_dir, cls), exist_ok=True)
+        os.makedirs(os.path.join(val_dir, cls), exist_ok=True)
+
     if not os.path.exists(train_dir) or not os.path.exists(val_dir):
         print("❌ Không tìm thấy thư mục dữ liệu train hoặc val trên đĩa cứng!")
         return False
@@ -35,10 +45,6 @@ def main():
     IMG_SIZE = 224
     BATCH_SIZE = 32
     EPOCHS = 30
-    
-    classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
-    num_classes = len(classes)
-    print(f"Số lớp: {num_classes} - {classes[:10]}...")
 
     # Data augmentation
     train_datagen = ImageDataGenerator(

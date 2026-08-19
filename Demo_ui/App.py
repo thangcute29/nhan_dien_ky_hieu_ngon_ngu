@@ -31,15 +31,19 @@ class SignLanguageDemoUI:
         self.subtitle_renderer = SubtitleRenderer(font_size=24)
         self.tts = TextToSpeech()
         self.virtual_cam = VirtualCamera()
+        self.tts_enabled = True  # Cờ Bật / Tắt âm thanh loa đọc phát âm
 
         self.llm_corrector = LLMCorrector() if LLMCorrector else None
         self.context_agent = ContextAgent(llm_corrector=self.llm_corrector) if ContextAgent else None
 
-        self.sentence_words = []
+        self.spelled_chars = []
+        self.action_words = []
         self.final_sentence = ""
         self.last_action = None
         self.last_hand_time = time.time()
         self.PAUSE_TIMEOUT = 2.0
+        self.tts_notification = ""
+        self.tts_notification_time = 0
 
         self.last_process_time = 0
         self.process_interval = 0.08  # 12.5 FPS cho AI, camera mượt 30 FPS
@@ -58,8 +62,11 @@ class SignLanguageDemoUI:
             
             self.final_sentence = translated
             if translated:
-                print(f"🔊 [Netflix Subtitle Async] Đang đọc phát âm câu dịch: '{translated}'", flush=True)
-                self.tts.speak(translated)
+                if self.tts_enabled:
+                    print(f"🔊 [Netflix Subtitle Async] Đang đọc phát âm câu dịch: '{translated}'", flush=True)
+                    self.tts.speak(translated)
+                else:
+                    print(f"🔇 [Loa TẮT] Đã dịch: '{translated}' (Không phát âm thanh)", flush=True)
         except Exception as e:
             print(f"⚠️ Lỗi luồng ngầm dịch thuật: {e}", flush=True)
 
@@ -83,7 +90,7 @@ class SignLanguageDemoUI:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
         print(f"\n🚀 Đã khởi tạo ngôn ngữ: {lang_names.get(current_lang, 'TIẾNG VIỆT')}", flush=True)
-        print("Phím tắt điều khiển: [Q] Thoát | [V] Việt | [E] Anh | [J] Nhật | [K] Hàn | [C] Xóa câu\n", flush=True)
+        print("Phím tắt điều khiển: [Q] Thoát | [M] Bật/Tắt Loa | [V] Việt | [E] Anh | [J] Nhật | [K] Hàn | [C] Xóa câu\n", flush=True)
 
         while True:
             ret, frame = cap.read()
@@ -106,28 +113,61 @@ class SignLanguageDemoUI:
                 bboxes = self._cached_bboxes
 
             display = frame.copy()
+            h, w = display.shape[:2]
             active_label = static_char or action
+
+            # Hiển thị thanh trạng thái góc trên (Ngôn ngữ + Loa phát âm)
+            cv2.rectangle(display, (10, 10), (220, 42), (20, 20, 20), -1)
+            cv2.putText(display, f"LANG: {lang_names.get(current_lang, 'VI')}", (15, 31),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 255), 2)
+
+            speaker_text = "LOA: BAT [M]" if self.tts_enabled else "LOA: TAT [M]"
+            speaker_color = (0, 220, 0) if self.tts_enabled else (0, 0, 220)
+            cv2.rectangle(display, (230, 10), (380, 42), (20, 20, 20), -1)
+            cv2.putText(display, speaker_text, (235, 31),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.50, speaker_color, 2)
+
+            # Pop-up thông báo nhanh 1.5s khi bấm phím M
+            if self.tts_notification and (time.time() - self.tts_notification_time < 1.5):
+                cv2.rectangle(display, (w // 2 - 120, 60), (w // 2 + 120, 110), (20, 20, 20), -1)
+                pop_color = (0, 255, 0) if self.tts_enabled else (0, 0, 255)
+                cv2.putText(display, self.tts_notification, (w // 2 - 95, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.8, pop_color, 2)
 
             # 2. Vẽ Bounding box bàn tay & Thẻ nhãn chữ cái bo góc
             if bboxes and len(bboxes) > 0:
                 self.last_hand_time = time.time()
                 display = draw_hand_badge(display, bboxes, active_label)
 
-            # 3. Gom từ mới khi AI nhận diện được nhãn
+            # 3. Gom riêng Chữ cái A-Z và Từ vựng GRU (Tách 2 bộ đệm)
             if active_label and active_label != self.last_action:
-                self.sentence_words.append(active_label)
+                if len(active_label) == 1 and active_label.isalpha():
+                    self.spelled_chars.append(active_label)
+                else:
+                    self.action_words.append(active_label)
                 self.last_action = active_label
                 self.last_hand_time = time.time()
                 print(f"✨ AI Nhận diện được: [{active_label}] (Conf: {conf:.2f})", flush=True)
 
-            # 4. Khi dừng tay > 2.0s -> Dịch câu và đọc phát âm ngầm
-            if len(self.sentence_words) > 0 and (time.time() - self.last_hand_time > self.PAUSE_TIMEOUT):
-                raw_sentence = " ".join(self.sentence_words)
-                self.sentence_words = []
-                threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang), daemon=True).start()
+            # 4. Khi dừng tay > 2.0s -> Dịch câu và đọc phát âm ngầm (Ưu tiên từ vựng trước, đánh vần sau)
+            if (time.time() - self.last_hand_time > self.PAUSE_TIMEOUT):
+                if len(self.action_words) > 0:
+                    raw_sentence = " ".join(self.action_words)
+                    self.action_words = []
+                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang), daemon=True).start()
+                elif len(self.spelled_chars) > 0:
+                    raw_sentence = " ".join(self.spelled_chars)
+                    self.spelled_chars = []
+                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang), daemon=True).start()
 
             # 5. VẼ PHỤ ĐỀ NETFLIX STYLE TIẾNG VIỆT CÓ DẤU NÉT CĂNG
-            display_text = self.final_sentence if self.final_sentence else " ".join(self.sentence_words)
+            display_text = ""
+            if self.final_sentence:
+                display_text = self.final_sentence
+            elif self.action_words:
+                display_text = f"Từ vựng: {' '.join(self.action_words)}"
+            elif self.spelled_chars:
+                display_text = f"Đánh vần: {' '.join(self.spelled_chars)}"
+
             if display_text:
                 display = self.subtitle_renderer.draw_subtitle(display, display_text, lang_names.get(current_lang, 'TIẾNG VIỆT'))
 
@@ -137,22 +177,29 @@ class SignLanguageDemoUI:
 
             # 7. Xử lý phím tắt
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if key in (ord('q'), ord('Q')):
                 break
-            elif key == ord('v'):
+            elif key in (ord('m'), ord('M')):
+                self.tts_enabled = not self.tts_enabled
+                status_str = "BẬT 🔊" if self.tts_enabled else "TẮT 🔇"
+                self.tts_notification = f"LOA: {status_str}"
+                self.tts_notification_time = time.time()
+                print(f"🔄 Đã chuyển trạng thái Loa: {status_str}", flush=True)
+            elif key in (ord('v'), ord('V')):
                 current_lang = 'vi'
                 print("🔄 Đã chuyển sang Tiếng Việt", flush=True)
-            elif key == ord('e'):
+            elif key in (ord('e'), ord('E')):
                 current_lang = 'en'
                 print("🔄 Đã chuyển sang Tiếng Anh", flush=True)
-            elif key == ord('j'):
+            elif key in (ord('j'), ord('J')):
                 current_lang = 'ja'
                 print("🔄 Đã chuyển sang Tiếng Nhật", flush=True)
-            elif key == ord('k'):
+            elif key in (ord('k'), ord('K')):
                 current_lang = 'ko'
                 print("🔄 Đã chuyển sang Tiếng Hàn", flush=True)
-            elif key == ord('c'):
-                self.sentence_words.clear()
+            elif key in (ord('c'), ord('C')):
+                self.spelled_chars.clear()
+                self.action_words.clear()
                 self.final_sentence = ""
                 self.last_action = None
                 print("🧹 Đã xóa toàn bộ câu tạm thời", flush=True)
