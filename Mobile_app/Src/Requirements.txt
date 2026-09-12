@@ -1,6 +1,1 @@
-opencv-python==4.8.0.74
-numpy==1.24.3
-tensorflow==2.13.0        # hoặc tflite-runtime nếu muốn nhẹ hơn
-pyttsx3==2.90
-requests==2.31.0
-pyvirtualcam==0.10.0       # tùy chọn
+-r ../../requirements.txt

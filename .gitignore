@@ -1,7 +1,7 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.class
 
 # Environments
 .env
@@ -34,4 +34,4 @@ hand_det_yolo_saved_model/
 .idea/
 .DS_Store
 Thumbs.db
-
+chat hội thoại/

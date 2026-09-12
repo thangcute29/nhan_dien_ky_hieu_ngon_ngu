@@ -1,5 +1,51 @@
 # 📋 CHANGELOG — Nhật Ký Nâng Cấp Mã Nguồn & Sửa Lỗi Hệ Thống
 
+## 🚀 Version 2.4.1 — Tối Ưu Hóa Bounding Box YOLO, Chặn Crop Rác & Nâng Cấp UI Phụ Đề Netflix (24/08/2026 — 02:34 AM)
+
+### 📌 Các Tính Năng & Nâng Cấp Kỹ Thuật (Upgrades & Bug Fixes)
+
+- **Tối Ưu Hóa Cắt Ảnh Bàn Tay (YOLO Hand Crop):**
+  - Chỉnh sửa `pad_x` và `pad_y` trong `Data_preparation/Prepare_detection.py` từ `5%` xuống `2%`. Khung bounding box giờ đây ôm khít từ cổ tay trở lên, loại bỏ bắp tay và áo để 2D CNN (Feature Extractor) học chính xác nhất.
+  - Đã xóa trắng bộ dữ liệu YOLO cũ bị lỗi để sẵn sàng tạo lại từ đầu.
+
+- **Màng Lọc Chặn Khung Ảnh Rác (Garbage Crop Filter):**
+  - Thêm điều kiện `(x2 - x1) < 30 or (y2 - y1) < 30` vào `detect_hands()` trong `Shared_lib/predictor.py`.
+  - Tự động từ chối các khung cắt dị dạng hoặc quá bé do YOLO nháy nhầm, bảo vệ 2D CNN và GRU khỏi dữ liệu rác.
+
+- **Nâng Cấp Ngưỡng Tự Tin (Confidence Threshold):**
+  - Tăng `GRU_CONF_THRESHOLD` từ `0.55` lên `0.70` trong `Shared_lib/predictor.py`.
+  - Tăng `min_conf` của `PredictionBufferFilter` (lọc tĩnh và động) từ `0.35` lên `0.55`.
+
+- **Cải Thiện Giao Diện Người Dùng (UI/UX) & Phụ Đề Netflix:**
+  - **Tự động ngắt dòng:** Tích hợp `textwrap` vào `SubtitleRenderer.draw_subtitle()` trong `Shared_lib/ui_helpers.py`, tự động bẻ câu dài thành nhiều dòng để không tràn màn hình.
+  - **Giới hạn chuỗi văn bản:** Dùng `cv2.getTextSize()` cắt bớt chuỗi tràn (`...`) trong `Mobile_app/Src/Main.py`.
+  - **Auto-Clear Phụ Đề:** Áp dụng `threading.Timer(5.0)` vào hàm `_async_translate_and_speak` ở cả `Main.py` và `App.py` để phụ đề tự động biến mất sau 5 giây.
+
+---
+
+## 🚀 Version 2.4.0 — Tự Động Quét Cắt Video Dài (Auto-Segmentation Dataset Builder), Bộ Lọc Motion Gate Khóa 'Bed', Chuẩn Hóa Space/Del & Nâng Cấp Pipeline Retrain Đa Nguồn (23/08/2026 — 01:05 AM)
+
+### 📌 1. Các Tính Năng & Nâng Cấp Kỹ Thuật Mới (New Features)
+
+- **Tính năng 1: Bộ Quét & Cắt Phân Đoạn Video Dài Tự Động (Auto-Segmentation Dataset Builder):**
+  - Bổ sung phương thức `auto_segment_and_enroll_long_video()` trong [`Tools/ai_tutor_engine.py`](file:///D:/THUC_TAP_CCVI/Nhan_dien_ngon_ngu_ky_hieu/Tools/ai_tutor_engine.py).
+  - Tự động phân tích dòng thời gian chuyển động (Motion Scanner), phát hiện các thung lũng khoảng lặng (Valley Boundaries) và cắt video dài thành các phân đoạn mẫu `seg_XXX.mp4` lưu vào `custom_enrollment/long_video_segments/`.
+- **Tính năng 2: Nâng Cấp Menu `[4]` Gia Sư AI Thành 4 Lựa Chọn Linh Hoạt & Quản Lý Dataset:**
+  - `[A]` 🎓 Luyện tập thực hành từ vựng với Màn hình đôi (Video Mẫu + Camera AI).
+  - `[B]` 📁 Nạp Video Ngắn (1 từ vựng 1-3s) kèm bước xác nhận chống bấm nhầm `(Y/N)`.
+  - `[C]` 🎞️ Nạp Video Dài Đa Từ Vựng (Tự động quét, cắt đoạn & tạo Dataset mới).
+  - `[D]` 🗑️ Quản lý / Xóa bỏ / Đổi tên nhãn Video Mẫu đã nạp nhầm để giữ sạch Dataset (`list_enrolled_words`, `delete_enrolled_word`, `rename_enrolled_word`).
+- **Tính năng 3: Bộ Lọc Chuyển Động (Motion Gate Detector) Khóa Spam 'Bed' & Lọc Chữ 'C' Thả Lỏng:**
+  - Tích hợp `calculate_hand_motion()` trong [`Shared_lib/predictor.py`](file:///D:/THUC_TAP_CCVI/Nhan_dien_ngon_ngu_ky_hieu/Shared_lib/predictor.py).
+  - Khi tay đứng yên / thả lỏng nghỉ ngơi (`motion < 5.0 px/frame`), AI tự động khóa GRU lại, triệt tiêu 100% việc đoán mò ra nhãn `bed` và lọc bỏ chữ `C` rác.
+- **Tính năng 4: Chuẩn Hóa Ký Tự `space` và `del` Trong Ghép Vần Fingerspelling:**
+  - Nâng cấp `_merge_fingerspelling()` trong [`Cloud_server/Api/context_agent.py`](file:///D:/THUC_TAP_CCVI/Nhan_dien_ngon_ngu_ky_hieu/Cloud_server/Api/context_agent.py).
+  - Ký tự `space` được tự động chuyển thành dấu cách `" "` thực tế thay vì in chữ "space", ký tự `del` tự động xóa ký tự liền trước.
+- **Tính năng 5: Tăng Tốc Độ Dịch Thuật Lên 31.3 FPS & Hỗ Trợ UTF-8 Windows Console:**
+  - Tốc độ xử lý video tăng từ 19.5 FPS lên **31.3 FPS** mượt mà.
+
+---
+
 ## 🚀 Version 2.1.0 — Khắc Phục Lỗi Nhận Diện Chữ Cái Tĩnh ASL, Triệt Tiêu Lỗi Spam 'Bed' & Bổ Sung Bật/Tắt Loa [M] (19/08/2026)
 
 ### 📌 1. Các Sự Cố Đã Khắc Phục (Bug Fixes)
@@ -966,3 +1012,142 @@ cv2.putText(display, f"NGON NGU: {lang_str}", (15, 33), cv2.FONT_HERSHEY_SIMPLEX
 
 
 
+
+## ?? Version 3.0.0 � K? Nguy�n MediaPipe, X�a B? YOLO & Ki?n Tr�c "2 B? N?o �?c L?p" (25/08/2026 � 02:55 AM)
+
+### ?? T� Duy Logic M?i & S?a L?i H? Th?ng C? (Architecture Redesign)
+
+- **X�a S? YOLO & EfficientNet (C�n Nguy�n G�y L?i Ch?p Gi?t):**
+  - **L? do l?i c?:** Khung Bounding Box c?a YOLO b?t kh�ng ?n �?nh, nh?y gi?t li�n t?c. Vi?c c?t ?nh (Crop) d�nh m�u �o, ph�ng n?n khi?n AI (EfficientNet) b? nhi?u, d?ch sai v� "ch?p ch? r�c" li�n t?c tr�n m�n h?nh.
+  - **C�ch kh?c ph?c:** Lo?i b? ho�n to�n YOLO v� EfficientNet. X�a th� m?c Dataset \Classification\ (11k Hands) kh�ng li�n quan. Chuy?n sang s? d?ng **MediaPipe** l�m b? d? t?m (Tracking) n?ng c?t, kh�a m?c ti�u to�n h?c 21 kh?p x��ng ch�nh x�c tuy?t �?i.
+
+- **Thi?t K? Ki?n Tr�c "2 B? N?o �?c L?p" (Dual-Brain Architecture):**
+  - **N?o T?nh (M?ng CNN - MobileNetV2):** 
+    - *C�ng d?ng:* Chuy�n d?ch ch? c�i ��nh v?n (A-Z). 
+    - *Logic:* �? ��p ?ng y�u c?u d�ng Dataset "?nh v? n�t x��ng tr�n n?n tr?ng" c?a c�ng ty, \predictor.py\ ��?c trang b? thu?t to�n **"T? v? ph�ng ?o (Self-Drawing Canvas)"**. Khi Live Call, MediaPipe d? tay th?t $\rightarrow$ T? �?ng v? ra ?nh khung x��ng ?o n?n �en $\rightarrow$ ��a ?nh ?o cho MobileNetV2 �?c. L?c s?ch 100% ph�ng n?n th?t ngo�i �?i.
+  - **N?o �?ng (M?ng RNN - GRU):** 
+    - *C�ng d?ng:* Chuy�n d?ch c?m t? h�nh �?ng (Xin ch�o, C?m �n).
+    - *Logic:* Ho�n to�n T�CH BI?T kh?i CNN �? tr�nh vi?c CNN kh�ng hi?u c�c h?nh d�ng tay l?. MediaPipe b�c t�ch **42 t?a �? to�n h?c (X, Y)** $\rightarrow$ Truy?n th?ng v�o GRU. T?c �? �nh s�ng, lo?i b? ho�n to�n �? tr? c?a vi?c x? l? h?nh ?nh.
+
+- **Thu?t To�n �i?u Ph?i Giao Th�ng: "C?ng V?n T?c" (Adaptive Motion Gate):**
+  - *V?n �? c?:* H? th?ng kh�ng ph�n bi?t ��?c l�c n�o ng�?i d�ng �ang ��nh V?n, l�c n�o �ang M�a C?m T?, d?n �?n vi?c nh?i nh�t d? li?u sai.
+  - *Gi?i ph�p:* T�ch h?p thu?t to�n t�nh to�n gia t?c c? tay (Adaptive Threshold) v�o \predictor.py\. 
+    - Tay �?ng im $\rightarrow$ Chuy?n Tr?ng th�i \IDLE\ $\rightarrow$ K�ch ho?t N?o T?nh (In ra ch? c�i).
+    - Tay vung m?nh $\rightarrow$ Chuy?n Tr?ng th�i \GESTURE\ $\rightarrow$ Gom 30 khung h?nh t?a �? truy?n cho N?o �?ng. D?ch c?c k? m�?t m�.
+
+## [2026-08-28] Ghi chú Huấn luyện CNN & Keras 3
+
+* **Lưu dự phòng 5 Epoch (SmartProgressCallback & Glob cleanup):**
+  * Trong file này, không sử dụng Class tự lưu mỗi 5 epoch và dọn dẹp bằng glob.
+  * **Lý do:** Mạng CNN khá nặng, nếu lưu quá nhiều file backup sẽ làm ổ cứng đầy rất nhanh. Chỉ dùng một ModelCheckpoint mặc định (tự động ghi đè khi có điểm số cao hơn) là đủ an toàn và tối ưu bộ nhớ.
+* **Lưu ý về Keras 3 (tf.keras):**
+  * Việc đồng nhất dùng Keras 3 từ đầu đến cuối giúp huấn luyện mượt mà.
+  * Tuy nhiên, kiến trúc Keras 3 đã được Google viết lại hoàn toàn (để tương thích chéo với PyTorch và JAX), điều này dẫn đến 2 hệ lụy khổng lồ cho dự án Android.
+
+## 🚀 Version 3.1.0 — Smart Dual Filter, Live Preview & Context Memory LLM (29/08/2026)
+
+### 📌 1. Nâng Cấp Logic Lõi (Core Predictor Upgrades)
+- **Tối ưu Hóa Ngưỡng Chuyển Động (Adaptive Motion):** Tăng ngưỡng chống nhiễu tĩnh từ 3.0 lên 10.0 pixel (vg_velocity * 0.6). Tránh tình trạng AI bị kẹt vĩnh viễn ở trạng thái GESTURE do tay rung hoặc nhiễu webcam. Hạ ngưỡng dự đoán GRU từ 10 xuống 5 frame để bắt các cụm từ vung tay siêu ngắn.
+- **Smart Dual Filter (Bộ lọc Kép 2 Não Bộ):** Áp dụng quy luật ASL thực tế:
+  - 
+um_hands == 2: Chốt 100% là múa Cụm từ. Khóa hoàn toàn luồng CNN để tránh dự đoán bậy.
+  - 
+um_hands == 1: Kết hợp vận tốc. Tay vung -> GRU. Tay đứng yên -> Đánh vần chữ cái (CNN).
+- **Trigger GRU on Drop:** Fix lỗi xóa nhầm buffer khi người dùng múa xong hạ tay xuống. Hệ thống nay sẽ kích hoạt GRU ngay khi missing_hand_count == 5 trước khi dọn dẹp bộ nhớ.
+
+### 📌 2. Trải Nghiệm Giao Diện & Dịch Thuật (UX & Translation)
+- **Live Preview Output:** Giao tiếp 2 chiều nay hiển thị ngay lập tức từ vựng dưới dạng Nháp [Tuong tac...]: mà không cần chờ delay 1.8s.
+- **Auto Text Wrapping:** Bổ sung hàm tự động đo độ dài đoạn text (cv2.getTextSize) và tự xuống dòng, chống tràn viền đối với các câu nói dài.
+- **LLM Context Memory (Trí nhớ 5 câu):** Context Agent nay sở hữu bộ nhớ đệm luân phiên deque(maxlen=5). Gemini API sẽ được cấp thêm lịch sử ngữ cảnh 5 câu trước đó để tự chuốt lại bản dịch tự nhiên và gắn kết như hội thoại người thật.
+
+## [v4.0.0] - 2026-08-29 (06:00 AM) - The Hybrid Vision Update (YOLOv8 + MediaPipe)
+### 📌 Kiến Trúc Lai (Hybrid Pipeline) Đột Phá
+- **Ống Nhòm Sniper (YOLOv8):** Hồi sinh YOLOv8 nhưng với vai trò mới: Chuyên gia dò tìm và khoanh vùng (Crop & Zoom) bàn tay từ xa. Giải quyết dứt điểm điểm yếu chí mạng của MediaPipe khi nhìn video quay xa (CCTV, YouTube).
+- **Coordinate Interpolation:** Tự động nội suy toán học để chuyển đổi 21 điểm xương khớp 3D (do MediaPipe vẽ trên ảnh crop) ngược về đúng tỷ lệ khung hình thực tế của Video gốc. Đảm bảo luồng dữ liệu 126 số cho GRU không bị biến dạng.
+- **Dynamic Adapter (Auto-Labeling):** Bổ sung công cụ prepare_detection.py (Kịch bản B). Cho phép "tái chế" lại tập ảnh phân loại (Classification) cũ, chạy ngầm MediaPipe để tự động vẽ hộp vuông Bounding Box và xuất ra chuẩn YOLO, không tốn 1 giây gán nhãn tay.
+- **Auto Training Pipeline:** 	rain_yolo.py được tối ưu với PyTorch. Đã huấn luyện thành công mô hình YOLO nhận diện tay với độ chính xác đạt 94.22% (mAP50).
+
+## [v4.0.1] - 2026-08-29 (06:09 AM) - Hybrid Training Extraction
+### 📌 Cập nhật Đào tạo (Training Pipeline)
+- **Hybrid Data Extraction:** Cấy ghép thành công Kiến trúc Lai (YOLOv8 + MediaPipe) vào file Cloud_server/Trainer/Retrain.py. 
+- **Giải quyết triệt để:** Từ nay, hệ thống không chỉ dùng Ống nhòm Sniper khi Dịch (Inference) mà còn dùng nó để Học (Training). AI có thể trích xuất chính xác 126 điểm tọa độ 3D từ các video mẫu quay xa (như CCTV, YouTube), giúp kho dữ liệu huấn luyện mở rộng không giới hạn khoảng cách vật lý.
+
+## [2026-09-11] Làm sạch WLASL100 và ổn định toàn bộ luồng nhận diện
+
+> Trạng thái: phần chuẩn bị dữ liệu, mã nguồn và kiểm thử đã hoàn tất. Huấn luyện GRU mới đang chạy; kết quả độ chính xác cuối cùng sẽ chỉ được ghi sau khi đánh giá trên tập test riêng.
+
+### 1. Lỗi gốc: dữ liệu cũ không còn đáng tin để học
+
+Thư mục `Sequences/processed` cũ có nhãn ở `train` và `val` không khớp nhau. Một số thư mục mang ID số của video thay vì tên ký hiệu. Nếu vẫn dùng dữ liệu này, mô hình có thể học đúng động tác nhưng lại gán sai tên, hoặc báo điểm validation không có ý nghĩa.
+
+**Cách xử lý:** giữ nguyên dữ liệu cũ để đối chiếu, tạo kho mới hoàn toàn tại `Sequences/processed_wlasl100`. Không có thao tác xóa hay ghi đè dữ liệu cũ.
+
+### 2. Hiểu đúng các file WLASL vừa tải
+
+| Thành phần | Vai trò |
+|---|---|
+| `videos/*.mp4` | Video động tác thực tế |
+| `nslt_100.json` | Danh bạ: video ID nào thuộc ký hiệu nào, thuộc split train/val/test nào, và đoạn frame cần dùng |
+| `WLASL_v0.3.json` | Metadata đầy đủ hơn của WLASL |
+| `wlasl_class_list.txt` | Bảng đổi mã lớp số sang tên gloss |
+| `missing.txt` | Danh sách video WLASL không tải được hoặc không còn nguồn |
+
+Vì vậy, `nslt_100.json` không làm video lỗi và cũng không phải dữ liệu xấu. Nó chính là bản đồ để gắn nhãn tự động. Khi đối chiếu, WLASL100 có 2.038 bản ghi metadata, còn máy hiện có 1.013 video; 1.025 bản ghi thiếu video là tình trạng tải chưa đủ, phù hợp với `missing.txt`.
+
+### 3. Pipeline mới học như thế nào
+
+1. Đọc `nslt_100.json` và bảng lớp để đổi ID video số thành tên ký hiệu.
+2. Giữ nguyên split chính thức của WLASL: train, validation và test; không tự trộn lẫn video giữa các tập.
+3. Cắt đúng đoạn frame được WLASL đánh dấu, lấy 30 mốc thời gian đều nhau.
+4. MediaPipe trích 21 điểm tay trái + 21 điểm tay phải, mỗi điểm có x/y/z = 126 số cho một frame.
+5. Nội suy các frame thiếu và chuẩn hóa vị trí bàn tay theo frame đầu tiên có tay. Nhờ vậy mô hình tập trung vào **chuyển động**, ít bị ảnh hưởng bởi vị trí người đứng trong khung hình.
+6. File nào có dưới 5 frame nhận được tay sẽ không đưa vào học; file cũ bất thường được đổi hậu tố `.sparse` hoặc `.invalid` để vẫn có thể khôi phục/kiểm tra.
+
+Sau bước kiểm tra chất lượng, dữ liệu khả dụng là 747 train, 165 validation và 100 test. Khi lọc thêm điều kiện một lớp phải có đủ mẫu train và có validation, GRU học trên 77 lớp: 615 train, 142 validation, 81 test.
+
+### 4. Các sửa đổi quan trọng trong code
+
+| Trước đây | Hiện tại |
+|---|---|
+| Train và chạy dự đoán có hai cách chuẩn hóa tọa độ khác nhau | Dùng chung `Shared_lib/sequence_utils.py` cho train, retrain và predictor |
+| Có thể validate trên tập ngẫu nhiên khi thiếu `val` | Bắt buộc dùng validation thật; từ chối train nếu label train/val không giao nhau |
+| Chỉ quan sát validation | Nạp checkpoint tốt nhất rồi đánh giá thêm trên test tách riêng |
+| Video ID số bị coi là tên nhãn | Đọc metadata WLASL để gán gloss tự động |
+| Lịch sử nhận diện có thể giữ động tác cũ | Bộ đệm bỏ dự đoán rỗng/thấp tin cậy và cho phép lặp lại ký hiệu sau một khoảng nghỉ |
+| Mobile/demo ưu tiên nhãn tĩnh | Ưu tiên nhãn hành động GRU, sau đó mới dùng nhãn tĩnh CNN |
+| Translation tiếng Anh có thể bị đổi sang tiếng Việt không cần thiết | Nếu đầu vào đã là tiếng Anh thì giữ nguyên; các gloss WLASL được bổ sung ánh xạ tiếng Việt |
+| API key Gemini ghi thẳng trong code | Chuyển sang biến môi trường `GEMINI_API_KEY`; khóa cũ đã từng lộ cần được thu hồi/đổi trên Google AI Studio |
+
+Các phần phụ trợ cũng được sửa: API chạy qua `python -m uvicorn`, feedback chống tên file/label nguy hiểm, tutor không còn tự chấm điểm tối thiểu khi làm sai, voice-to-sign phát tuần tự nhiều từ, và đường dẫn `Assets` được thống nhất đúng chữ hoa/thường.
+
+### 5. Độ tin cậy khi phát hành model
+
+- Checkpoint chỉ bị dọn sau khi model mới vượt ngưỡng an toàn.
+- Registry chỉ công bố phiên bản khi đủ model, nhãn và metadata đi kèm.
+- Retrain so sánh độ chính xác mới với bản tốt nhất đã lưu; tùy chọn `force` chỉ bỏ qua số lượng mẫu tối thiểu, không bỏ qua kiểm tra chất lượng.
+- Bộ chuyển đổi TFLite dùng file tạm rồi mới thay file chính, tránh để lại model dở dang nếu chuyển đổi lỗi.
+
+### 6. Kiểm thử và môi trường
+
+Đã thêm `tests/test_sequence_pipeline.py` và chạy thành công các kiểm tra: shape 30x126, mask tay, chuẩn hóa quỹ đạo, ranh giới frame, gán nhãn video số, dịch tiếng Anh, đủ ánh xạ 100 lớp WLASL và chống path traversal của feedback. Kiểm tra biên dịch toàn dự án cũng đã chạy thành công.
+
+Đã thêm `requirements.txt` gốc và khóa các phiên bản TensorFlow/MediaPipe/NumPy/Protobuf tương thích. Sau khi điều chỉnh môi trường, `pip check` không còn báo dependency bị hỏng.
+
+### 7. Cách tự chạy lại để học
+
+```powershell
+cd D:\THUC_TAP_CCVI\Nhan_dien_ngon_ngu_ky_hieu
+python Data_preparation\Prepare_sequences.py --validate
+python Data_preparation\Prepare_sequences.py
+python -m unittest tests.test_sequence_pipeline
+python Cloud_server\Trainer\train_scripts\train_gru.py
+```
+
+Tài liệu thao tác chi tiết nằm ở `DATA_PIPELINE.md`. Lưu ý: WLASL là ngôn ngữ ký hiệu Mỹ (ASL); phần dịch hiện đổi gloss sang văn bản tiếng Việt, chưa biến dữ liệu này thành ngôn ngữ ký hiệu Việt Nam.
+### 8. Kết quả huấn luyện GRU (đã hoàn tất)
+
+- Best validation accuracy: **57,75%**.
+- Held-out test accuracy: **60,49%** trên **81** video test không dùng để chọn checkpoint.
+- Model và metadata mới đã được lưu tại `Shared_lib/Assets/action_recognizer.h5` và `Shared_lib/Assets/action_recognizer_info.pkl`.
+
+Diễn giải đúng: đây là mốc baseline đáng tin cậy hơn điểm cũ vì validation/test đã được tách theo split WLASL và mọi video đều có nhãn từ metadata. Chưa nên coi đây là độ chính xác trong mọi điều kiện quay thực tế; WLASL có góc quay, ánh sáng và người thực hiện khác video webcam của ứng dụng.

@@ -19,32 +19,43 @@ from PIL import Image, ImageDraw, ImageFont
 # 🔊 1. MODULE LOA ĐỌC PHÁT ÂM TTS (Async Background Threading)
 # ==============================================================================
 class TextToSpeech:
-    """Module phát âm thanh đọc câu dịch Tiếng Việt/Anh chạy ngầm không làm đơ giao diện"""
+    """Module phát âm thanh đọc câu dịch Tiếng Việt/Anh chạy ngầm bằng Hàng đợi (Queue) không làm đơ giao diện"""
     def __init__(self, rate=150, volume=1.0):
         self.rate = rate
         self.volume = volume
-        self._engine = None
         try:
             import pyttsx3
             self._pyttsx3 = pyttsx3
         except ImportError:
             self._pyttsx3 = None
+            
+        import queue
+        self.q = queue.Queue()
+        self.worker_thread = threading.Thread(target=self._tts_worker, daemon=True)
+        if self._pyttsx3:
+            self.worker_thread.start()
 
-    def _speak_thread(self, text):
-        if not self._pyttsx3:
-            return
+    def _tts_worker(self):
         try:
             engine = self._pyttsx3.init()
             engine.setProperty('rate', self.rate)
             engine.setProperty('volume', self.volume)
-            engine.say(text)
-            engine.runAndWait()
-        except Exception as e:
-            print(f"⚠️ Lỗi phát âm thanh TTS: {e}", flush=True)
+            while True:
+                text = self.q.get()
+                if text is None:
+                    break
+                try:
+                    engine.say(text)
+                    engine.runAndWait()
+                except Exception as e:
+                    print(f"⚠️ Lỗi phát âm thanh TTS: {e}", flush=True)
+                self.q.task_done()
+        except Exception:
+            pass
 
     def speak(self, text):
-        if text and text.strip():
-            threading.Thread(target=self._speak_thread, args=(text,), daemon=True).start()
+        if text and text.strip() and self._pyttsx3:
+            self.q.put(text)
 
 
 # ==============================================================================
@@ -122,9 +133,19 @@ class SubtitleRenderer:
         pil_img = Image.fromarray(cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_img, "RGBA")
 
-        bbox = self.font.getbbox(full_text)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
+        # Ngắt dòng tự động nếu chữ quá dài
+        import textwrap
+        max_chars_per_line = int((w - 80) / (self.font_size * 0.6))  # Ước lượng số ký tự tối đa trên 1 dòng
+        if max_chars_per_line < 10:
+            max_chars_per_line = 10
+        wrapped_lines = textwrap.wrap(full_text, width=max_chars_per_line)
+        
+        # Tính toán kích thước khối chữ
+        line_heights = [self.font.getbbox(line)[3] - self.font.getbbox(line)[1] for line in wrapped_lines]
+        line_widths = [self.font.getbbox(line)[2] - self.font.getbbox(line)[0] for line in wrapped_lines]
+        
+        text_w = max(line_widths)
+        text_h = sum(line_heights) + 5 * (len(wrapped_lines) - 1) # 5px khoảng cách giữa các dòng
 
         padding_x = 20
         padding_y = 10
@@ -149,18 +170,23 @@ class SubtitleRenderer:
         pil_img = Image.alpha_composite(pil_img.convert("RGBA"), overlay)
         draw = ImageDraw.Draw(pil_img)
 
-        text_x = box_x1 + (box_w - text_w) // 2
-        text_y = box_y1 + padding_y - 2
+        # 2. Đổ bóng viền chữ đen (Text Shadow) và Vẽ từng dòng
+        current_y = box_y1 + padding_y - 2
+        for i, line in enumerate(wrapped_lines):
+            line_w = line_widths[i]
+            text_x = box_x1 + (box_w - line_w) // 2
+            
+            draw.text((text_x + 2, current_y + 2), line, font=self.font, fill=(0, 0, 0, 200))
+            draw.text((text_x - 2, current_y - 2), line, font=self.font, fill=(0, 0, 0, 200))
+            draw.text((text_x + 2, current_y - 2), line, font=self.font, fill=(0, 0, 0, 200))
+            draw.text((text_x - 2, current_y + 2), line, font=self.font, fill=(0, 0, 0, 200))
 
-        # 2. Đổ bóng viền chữ đen (Text Shadow)
-        shadow_color = (0, 0, 0, 255)
-        for offset_x, offset_y in [(-1, -1), (1, -1), (-1, 1), (1, 1), (0, 2)]:
-            draw.text((text_x + offset_x, text_y + offset_y), full_text, font=self.font, fill=shadow_color)
+            # 3. Vẽ chữ chính thức (Foreground Text)
+            draw.text((text_x, current_y), line, font=self.font, fill=(255, 255, 255, 255))
+            
+            current_y += line_heights[i] + 5
 
-        # 3. Chữ màu trắng nổi bật
-        draw.text((text_x, text_y), full_text, font=self.font, fill=(255, 255, 255, 255))
-
-        return cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGBA2BGR)
 
 
 # ==============================================================================

@@ -37,7 +37,10 @@ def main():
             app.run()
         elif choice == '3':
             print("🚀 Đang khởi động Cloud API Server...", flush=True)
-            subprocess.run([sys.executable, os.path.join(BASE_DIR, "Cloud_server", "Api", "Main.py")])
+            subprocess.run([
+                sys.executable, "-m", "uvicorn", "Cloud_server.Api.Main:app",
+                "--host", "127.0.0.1", "--port", "8000"
+            ], cwd=BASE_DIR)
         elif choice in ('q', 'quit', 'exit'):
             print("👋 Cảm ơn bạn đã sử dụng hệ thống Ngôn ngữ Ký hiệu!", flush=True)
             break

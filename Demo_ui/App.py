@@ -23,9 +23,8 @@ class SignLanguageDemoUI:
     def __init__(self):
         print("🚀 Khởi tạo Mô hình AI & Giao diện Demo...", flush=True)
         self.predictor = SignLanguagePredictor(
-            yolo_path=os.path.join(BASE_DIR, "mobile_app", "assets", "hand_det_yolo.tflite"),
-            feature_path=os.path.join(BASE_DIR, "mobile_app", "assets", "feature_extractor.tflite"),
-            gru_path=os.path.join(BASE_DIR, "mobile_app", "assets", "action_recognizer.tflite")
+            feature_path=os.path.join(BASE_DIR, "Mobile_app", "assets", "feature_extractor.tflite"),
+            gru_path=os.path.join(BASE_DIR, "Mobile_app", "assets", "action_recognizer.tflite")
         )
         
         self.subtitle_renderer = SubtitleRenderer(font_size=24)
@@ -40,6 +39,8 @@ class SignLanguageDemoUI:
         self.action_words = []
         self.final_sentence = ""
         self.last_action = None
+        self._inactive_since = None
+        self._translation_generation = 0
         self.last_hand_time = time.time()
         self.PAUSE_TIMEOUT = 2.0
         self.tts_notification = ""
@@ -52,7 +53,7 @@ class SignLanguageDemoUI:
         self._cached_conf = 0.0
         self._cached_bboxes = []
 
-    def _async_translate_and_speak(self, raw_sentence, lang):
+    def _async_translate_and_speak(self, raw_sentence, lang, generation):
         """Xử lý dịch thuật LLM và đọc phát âm ngầm (Async Background Thread)"""
         try:
             if self.context_agent:
@@ -60,6 +61,8 @@ class SignLanguageDemoUI:
             else:
                 translated = raw_sentence
             
+            if generation != self._translation_generation:
+                return
             self.final_sentence = translated
             if translated:
                 if self.tts_enabled:
@@ -67,8 +70,15 @@ class SignLanguageDemoUI:
                     self.tts.speak(translated)
                 else:
                     print(f"🔇 [Loa TẮT] Đã dịch: '{translated}' (Không phát âm thanh)", flush=True)
+                
+                # Sau 5 giây tự động ẩn phụ đề đi (tránh hiển thị mãi mãi)
+                import threading
+                threading.Timer(5.0, self.clear_sentence).start()
         except Exception as e:
             print(f"⚠️ Lỗi luồng ngầm dịch thuật: {e}", flush=True)
+
+    def clear_sentence(self):
+        self.final_sentence = ""
 
     def run(self):
         print("\n=======================================================", flush=True)
@@ -114,7 +124,7 @@ class SignLanguageDemoUI:
 
             display = frame.copy()
             h, w = display.shape[:2]
-            active_label = static_char or action
+            active_label = action or static_char
 
             # Hiển thị thanh trạng thái góc trên (Ngôn ngữ + Loa phát âm)
             cv2.rectangle(display, (10, 10), (220, 42), (20, 20, 20), -1)
@@ -147,17 +157,27 @@ class SignLanguageDemoUI:
                 self.last_action = active_label
                 self.last_hand_time = time.time()
                 print(f"✨ AI Nhận diện được: [{active_label}] (Conf: {conf:.2f})", flush=True)
+            if active_label:
+                self._inactive_since = None
+            elif self._inactive_since is None:
+                self._inactive_since = time.time()
+            elif time.time() - self._inactive_since >= 0.35:
+                self.last_action = None
 
             # 4. Khi dừng tay > 2.0s -> Dịch câu và đọc phát âm ngầm (Ưu tiên từ vựng trước, đánh vần sau)
             if (time.time() - self.last_hand_time > self.PAUSE_TIMEOUT):
                 if len(self.action_words) > 0:
                     raw_sentence = " ".join(self.action_words)
                     self.action_words = []
-                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang), daemon=True).start()
+                    self.last_action = None
+                    self._translation_generation += 1
+                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang, self._translation_generation), daemon=True).start()
                 elif len(self.spelled_chars) > 0:
                     raw_sentence = " ".join(self.spelled_chars)
                     self.spelled_chars = []
-                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang), daemon=True).start()
+                    self.last_action = None
+                    self._translation_generation += 1
+                    threading.Thread(target=self._async_translate_and_speak, args=(raw_sentence, current_lang, self._translation_generation), daemon=True).start()
 
             # 5. VẼ PHỤ ĐỀ NETFLIX STYLE TIẾNG VIỆT CÓ DẤU NÉT CĂNG
             display_text = ""

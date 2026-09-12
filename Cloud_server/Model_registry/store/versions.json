@@ -1,5 +1,5 @@
 {
-  "latest": "1.0.1",
+  "latest": "1.0.12",
   "history": [
     {
       "version": "1.0.1",
@@ -8,6 +8,105 @@
         "yolo": "d:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.1\\hand_det_yolo.pt",
         "feature": "d:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.1\\feature_extractor.h5",
         "gru": "d:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.1\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.2",
+      "timestamp": "2026-08-23T01:24:03.537862",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.2\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.2\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.2\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.3",
+      "timestamp": "2026-08-23T23:27:45.761918",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.3\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.3\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.3\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.4",
+      "timestamp": "2026-08-24T00:44:42.914537",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.4\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.4\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.4\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.5",
+      "timestamp": "2026-08-24T01:11:19.802756",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.5\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.5\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.5\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.6",
+      "timestamp": "2026-08-24T05:49:46.619438",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.6\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.6\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.6\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.7",
+      "timestamp": "2026-08-29T00:02:23.058892",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.7\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.7\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.7\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.8",
+      "timestamp": "2026-08-29T01:49:55.156489",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.8\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.8\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.8\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.9",
+      "timestamp": "2026-08-29T04:26:34.253180",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.9\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.9\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.9\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.10",
+      "timestamp": "2026-09-05T21:38:42.333970",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.10\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.10\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.10\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.11",
+      "timestamp": "2026-09-05T21:59:37.177385",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.11\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.11\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.11\\action_recognizer.h5"
+      }
+    },
+    {
+      "version": "1.0.12",
+      "timestamp": "2026-09-06T02:15:59.611985",
+      "models": {
+        "yolo": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.12\\hand_det_yolo.pt",
+        "feature": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.12\\feature_extractor.h5",
+        "gru": "D:\\THUC_TAP_CCVI\\Nhan_dien_ngon_ngu_ky_hieu\\Cloud_server\\Model_registry\\store\\1.0.12\\action_recognizer.h5"
       }
     }
   ]

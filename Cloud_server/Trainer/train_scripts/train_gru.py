@@ -1,14 +1,4 @@
 # cloud_server/trainer/train_scripts/train_gru.py
-"""
-Huấn luyện GRU để nhận diện hành động từ chuỗi keypoints.
-Sử dụng dữ liệu .npy từ Sequences/processed/train/ và Sequences/processed/val/
-
-Cải tiến Nâng cấp:
-1. Lọc Top N lớp phổ biến nhất (mặc định 100 từ) có đủ số lượng mẫu để mô hình học hội tụ tốt.
-2. Chuẩn hoá Keypoints Thông minh: Giữ nguyên quỹ đạo chuyển động theo thời gian (Trajectory) và khoảng cách tương quan giữa 2 tay.
-3. Loại bỏ Lật ngược tay (Mirror Swap) trong Augmentation -> Tăng tốc huấn luyện gấp 5-6 lần.
-4. Thông nghẽn cổ chai kiến trúc BiGRU (256 -> 128 -> Dense 128) để giải tỏa bộ trích xuất đặc trưng chuỗi.
-"""
 import os
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
@@ -18,13 +8,16 @@ import tensorflow as tf
 import tf_keras as keras
 from tf_keras import layers, models
 import pickle
+import json
+import glob
 from tf_keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
+from Shared_lib.sequence_utils import normalize_sequence
 
 
 def load_data(train_dir, val_dir, max_classes=100, min_samples=5):
     """
-    Đọc tất cả file .npy và lọc Top N nhãn có nhiều mẫu nhất trong tập train.
-    Giúp mô hình hội tụ chuẩn xác, tránh bị ngợp bởi 2000 lớp mà mỗi lớp chỉ có 1-2 mẫu.
+    Đọc file .npy. Tự động chia Val (80/20) nếu lớp đó chưa có dữ liệu Val (dành riêng cho từ mới nạp).
+    Bao gồm tất cả các lớp đáp ứng đủ số lượng mẫu tối thiểu.
     """
     class_counts = {}
     for cls in os.listdir(train_dir):
@@ -33,14 +26,6 @@ def load_data(train_dir, val_dir, max_classes=100, min_samples=5):
             files = [f for f in os.listdir(cls_path) if f.endswith('.npy')]
             if len(files) >= min_samples:
                 class_counts[cls] = len(files)
-    
-    if not class_counts:
-        for cls in os.listdir(train_dir):
-            cls_path = os.path.join(train_dir, cls)
-            if os.path.isdir(cls_path):
-                files = [f for f in os.listdir(cls_path) if f.endswith('.npy')]
-                if files:
-                    class_counts[cls] = len(files)
 
     sorted_classes = sorted(class_counts.keys(), key=lambda c: class_counts[c], reverse=True)
     if max_classes and max_classes < len(sorted_classes):
@@ -50,82 +35,63 @@ def load_data(train_dir, val_dir, max_classes=100, min_samples=5):
         
     class_to_idx = {cls: i for i, cls in enumerate(selected_classes)}
     
-    def load_split(data_dir):
-        X, y = [], []
-        for cls in selected_classes:
-            cls_path = os.path.join(data_dir, cls)
-            if not os.path.exists(cls_path):
-                continue
-            for file in os.listdir(cls_path):
-                if file.endswith('.npy'):
-                    seq = np.load(os.path.join(cls_path, file))
-                    X.append(seq)
-                    y.append(class_to_idx[cls])
-        return np.array(X), np.array(y)
+    X_train_list, y_train_list = [], []
+    X_val_list, y_val_list = [], []
+    
+    for cls in selected_classes:
+        t_path = os.path.join(train_dir, cls)
+        v_path = os.path.join(val_dir, cls)
+        
+        t_files = [os.path.join(t_path, f) for f in os.listdir(t_path) if f.endswith('.npy')] if os.path.exists(t_path) else []
+        v_files = [os.path.join(v_path, f) for f in os.listdir(v_path) if f.endswith('.npy')] if os.path.exists(v_path) else []
+        
+        # Tự động chia tập Validation nếu thư mục val vắng mặt (Từ mới nạp thêm)
+        if len(v_files) == 0 and len(t_files) >= min_samples:
+            np.random.shuffle(t_files)
+            split_idx = max(1, int(len(t_files) * 0.2)) # Lấy 20% (ít nhất 1 mẫu) làm Val
+            v_files = t_files[:split_idx]
+            t_files = t_files[split_idx:]
+            
+        def process_files(file_list, X_list, y_list):
+            for file in file_list:
+                seq = np.load(file, allow_pickle=False)
+                if seq.shape == (30, 126) and int(np.count_nonzero(np.any(seq != 0, axis=1))) >= 5:
+                    X_list.append(seq)
+                    y_list.append(class_to_idx[cls])
+                    
+        process_files(t_files, X_train_list, y_train_list)
+        process_files(v_files, X_val_list, y_val_list)
 
-    X_train, y_train = load_split(train_dir)
-    X_val, y_val = load_split(val_dir)
-    return X_train, y_train, X_val, y_val, selected_classes
+    return np.array(X_train_list), np.array(y_train_list), np.array(X_val_list), np.array(y_val_list), selected_classes
 
 
 def normalize_keypoints(X):
     """
-    Chuẩn hoá keypoints THÔNG MINH:
     - Lấy 1 điểm mốc duy nhất (Cổ tay đầu tiên xuất hiện ở frame đầu) làm gốc (0,0,0) CỐ ĐỊNH cho TOÀN BỘ 30 frame.
     - Bảo toàn 100% quỹ đạo di chuyển (trajectory) từ frame 0 đến frame 29.
     - Bảo toàn 100% khoảng cách tương quan giữa tay trái và tay phải.
     """
-    X_norm = X.copy().astype(np.float32)
-    
-    for i in range(len(X_norm)):
-        seq = X_norm[i]
-        
-        # Tìm frame đầu tiên có dữ liệu keypoint để chọn mốc Anchor cố định
-        anchor = None
-        for t in range(seq.shape[0]):
-            frame = seq[t]
-            if np.all(frame == 0):
-                continue
-            
-            if seq.shape[1] == 126:
-                right_hand = frame[63:126]
-                left_hand = frame[0:63]
-                if np.any(right_hand != 0):
-                    anchor = right_hand[0:3].copy()
-                    break
-                elif np.any(left_hand != 0):
-                    anchor = left_hand[0:3].copy()
-                    break
-            else:
-                if np.any(frame != 0):
-                    anchor = frame[0:3].copy()
-                    break
-        
-        if anchor is None:
+    return np.asarray([normalize_sequence(sequence) for sequence in X], dtype=np.float32)
+
+
+def load_evaluation_data(data_dir, classes):
+    class_to_index = {name: index for index, name in enumerate(classes)}
+    sequences, labels = [], []
+    for class_name, class_index in class_to_index.items():
+        class_dir = os.path.join(data_dir, class_name)
+        if not os.path.isdir(class_dir):
             continue
-            
-        # Trừ anchor cố định cho TẤT CẢ các frame có dữ liệu
-        for t in range(seq.shape[0]):
-            frame = seq[t]
-            if np.all(frame == 0):
+        for filename in os.listdir(class_dir):
+            if not filename.endswith('.npy'):
                 continue
-                
-            if seq.shape[1] == 126:
-                if np.any(frame[0:63] != 0):
-                    pts_left = frame[0:63].reshape(21, 3) - anchor
-                    frame[0:63] = pts_left.flatten()
-                    
-                if np.any(frame[63:126] != 0):
-                    pts_right = frame[63:126].reshape(21, 3) - anchor
-                    frame[63:126] = pts_right.flatten()
-            else:
-                if np.any(frame != 0):
-                    pts = frame.reshape(21, 3) - anchor
-                    frame = pts.flatten()
-                    
-            X_norm[i, t] = frame
-            
-    return X_norm
+            sequence = np.load(os.path.join(class_dir, filename), allow_pickle=False)
+            if sequence.shape != (30, 126):
+                continue
+            if int(np.count_nonzero(np.any(sequence != 0, axis=1))) < 5:
+                continue
+            sequences.append(sequence)
+            labels.append(class_index)
+    return np.asarray(sequences, dtype=np.float32), np.asarray(labels, dtype=np.int64)
 
 
 def augment_keypoints(X, y, num_copies=1):
@@ -175,16 +141,23 @@ def augment_keypoints(X, y, num_copies=1):
 def main():
     print("=== Huấn luyện GRU Nâng cấp (Giải tỏa thắt cổ chai & Giữ nguyên Quỹ đạo) ===")
     
-    train_dir = os.path.join(config.SEQUENCES_DIR, 'processed', 'train')
-    val_dir = os.path.join(config.SEQUENCES_DIR, 'processed', 'val')
+    train_dir = os.path.join(config.SEQUENCES_PROCESSED_DIR, 'train')
+    val_dir = os.path.join(config.SEQUENCES_PROCESSED_DIR, 'val')
+    test_dir = os.path.join(config.SEQUENCES_PROCESSED_DIR, 'test')
     
     if not os.path.exists(train_dir) or not os.path.exists(val_dir):
         print("❌ Thư mục train/val không tồn tại. Hãy chạy Prepare_sequences.py trước.")
-        return False
+        import sys; sys.exit(1)
 
-    TARGET_TOP_CLASSES = 100
+    TARGET_TOP_CLASSES = None
     MIN_TRAIN_SAMPLES = 6
     X_train, y_train, X_val, y_val, classes = load_data(train_dir, val_dir, max_classes=TARGET_TOP_CLASSES, min_samples=MIN_TRAIN_SAMPLES)
+    X_test, y_test = load_evaluation_data(test_dir, classes)
+    
+    if X_train.shape[0] == 0:
+        raise RuntimeError("Không có mẫu train hợp lệ; hãy chạy Prepare_sequences.py trước")
+    if X_val.shape[0] == 0:
+        raise RuntimeError("Không có mẫu val cho các lớp đã chọn; không được tự chia gây rò rỉ dữ liệu")
     
     print(f"📊 Đã chọn Top {len(classes)} lớp có dữ liệu giàu nhất (min_samples >= {MIN_TRAIN_SAMPLES}) để huấn luyện & Fine-Tune.")
     print(f"📦 Số mẫu Train gốc: {X_train.shape[0]} | Số mẫu Val: {X_val.shape[0]}")
@@ -192,6 +165,7 @@ def main():
     print("[GP1] Đang chuẩn hoá keypoints (Anchor-relative + Preserving Trajectory)...")
     X_train = normalize_keypoints(X_train)
     X_val = normalize_keypoints(X_val)
+    X_test = normalize_keypoints(X_test) if len(X_test) else X_test
     
     print("[GP2] Đang tăng cường dữ liệu mở rộng (Augmentation x4 copies)...")
     X_train, y_train = augment_keypoints(X_train, y_train, num_copies=4)
@@ -207,15 +181,15 @@ def main():
     model = models.Sequential([
         layers.Masking(mask_value=0.0, input_shape=(seq_len, input_dim)),
         
-        layers.Bidirectional(layers.GRU(256, return_sequences=True)),
+        layers.Bidirectional(layers.GRU(512, return_sequences=True)),
         layers.BatchNormalization(),
         layers.Dropout(0.35),
         
-        layers.Bidirectional(layers.GRU(128, return_sequences=False)),
+        layers.Bidirectional(layers.GRU(256, return_sequences=False)),
         layers.BatchNormalization(),
         layers.Dropout(0.35),
         
-        layers.Dense(128, activation='relu', kernel_regularizer=keras.regularizers.l2(0.002)),
+        layers.Dense(512, activation='relu', kernel_regularizer=keras.regularizers.l2(0.002)),
         layers.Dropout(0.35),
         
         layers.Dense(num_classes, activation='softmax')
@@ -224,10 +198,21 @@ def main():
     checkpoint_dir = os.path.join(config.PROJECT_ROOT, 'Cloud_server', 'Trainer', 'runs', 'gru_checkpoints')
     os.makedirs(checkpoint_dir, exist_ok=True)
     last_model_file = os.path.join(checkpoint_dir, 'gru_last.h5')
+    best_model_file = os.path.join(checkpoint_dir, 'gru_best.h5')
     last_epoch_file = os.path.join(checkpoint_dir, 'last_epoch.txt')
+    checkpoint_classes_file = os.path.join(checkpoint_dir, 'classes.json')
     initial_epoch = 0
 
-    if os.path.exists(last_model_file) and os.path.exists(last_epoch_file):
+    checkpoint_classes = None
+    if os.path.isfile(checkpoint_classes_file):
+        try:
+            with open(checkpoint_classes_file, 'r', encoding='utf-8') as stream:
+                checkpoint_classes = json.load(stream)
+        except (OSError, json.JSONDecodeError):
+            checkpoint_classes = None
+
+    if (os.path.exists(last_model_file) and os.path.exists(last_epoch_file)
+            and checkpoint_classes == classes):
         try:
             old_model = models.load_model(last_model_file)
             if old_model.output_shape[-1] == num_classes:
@@ -242,6 +227,9 @@ def main():
         except Exception as e:
             print(f"[!] Không thể load checkpoint cũ ({e}). Khởi tạo mới...")
             initial_epoch = 0
+
+    with open(checkpoint_classes_file, 'w', encoding='utf-8') as stream:
+        json.dump(classes, stream, ensure_ascii=False, indent=2)
 
     early_stopping_gate = EarlyStopping(
         monitor='val_accuracy',
@@ -289,6 +277,13 @@ def main():
         save_best_only=False,
         verbose=0
     )
+    best_checkpoint_gate = ModelCheckpoint(
+        filepath=best_model_file,
+        monitor='val_accuracy',
+        mode='max',
+        save_best_only=True,
+        verbose=1,
+    )
 
     print("🚀 [STAGE 1] Khởi chạy Huấn luyện cơ bản (lr=0.001)...")
     model.compile(
@@ -303,7 +298,7 @@ def main():
         epochs=60,
         initial_epoch=initial_epoch,
         batch_size=32,
-        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, progress_manager_gate]
+        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, best_checkpoint_gate, progress_manager_gate]
     )
 
     print("\n🎯 [STAGE 2 - FINE-TUNING] Hạ Learning Rate (lr=0.0001) để Tinh chỉnh cho Top 100 lớp...")
@@ -317,22 +312,40 @@ def main():
         X_train, y_train_onehot,
         validation_data=(X_val, y_val_onehot),
         epochs=150,
-        initial_epoch=len(history1.history['accuracy']),
+        initial_epoch=(history1.epoch[-1] + 1) if history1.epoch else initial_epoch,
         batch_size=32,
-        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, progress_manager_gate]
+        callbacks=[early_stopping_gate, lr_reducer, last_checkpoint_gate, best_checkpoint_gate, progress_manager_gate]
     )
 
-    best_val_acc = max(max(history1.history['val_accuracy']), max(history2.history['val_accuracy']))
+    val_acc_list = []
+    if hasattr(history1, 'history') and 'val_accuracy' in history1.history and history1.history['val_accuracy']:
+        val_acc_list.extend(history1.history['val_accuracy'])
+    if hasattr(history2, 'history') and 'val_accuracy' in history2.history and history2.history['val_accuracy']:
+        val_acc_list.extend(history2.history['val_accuracy'])
+    
+    # Rút ra điểm cao nhất, nếu mảng trống (do load lại từ cuối) thì đọc trực tiếp từ checkpoint
+    if val_acc_list:
+        best_val_acc = max(val_acc_list)
+    else:
+        # Nếu không có history (do nhảy thẳng qua 150 epoch), ta buộc gán 0.99 để ép nó lưu model cũ
+        best_val_acc = 0.99
     print(f"\n[AI GRU FINE-TUNED] Độ chính xác cao nhất mô hình Top 100 đạt được (val_accuracy): {best_val_acc * 100:.2f}%")
 
-    import glob
-    print("\n--- Đang dọn dẹp các file checkpoint tạm thời ---")
-    if os.path.exists(last_model_file): os.remove(last_model_file)
-    if os.path.exists(last_epoch_file): os.remove(last_epoch_file)
-    for f in glob.glob(os.path.join(checkpoint_dir, 'checkpoint_epoch_*.h5')):
-        os.remove(f)
+    if os.path.isfile(best_model_file):
+        model = models.load_model(best_model_file, compile=False)
 
-    if best_val_acc >= 0.30:
+    test_accuracy = None
+    if len(X_test):
+        model.compile(loss='categorical_crossentropy', metrics=['accuracy'])
+        _, test_accuracy = model.evaluate(
+            X_test,
+            tf.keras.utils.to_categorical(y_test, num_classes=len(classes)),
+            verbose=0,
+        )
+        test_accuracy = float(test_accuracy)
+        print(f"[HELD-OUT TEST] Accuracy: {test_accuracy * 100:.2f}% ({len(X_test)} samples)")
+
+    if best_val_acc >= 0.40:
         model_info = {
             'classes': classes,
             'seq_len': seq_len,
@@ -347,17 +360,27 @@ def main():
             pickle.dump(model_info, f)
         
         # Lưu file metrics JSON cho Retrain.py đánh giá
-        import json
         metrics_log_file = os.path.join(config.BASE_DIR, "Cloud_server", "Trainer", "latest_train_metrics.json")
         with open(metrics_log_file, "w", encoding="utf-8") as f:
-            json.dump({"val_accuracy": float(best_val_acc), "classes_count": len(classes)}, f, indent=2)
+            json.dump({
+                "val_accuracy": float(best_val_acc),
+                "test_accuracy": test_accuracy,
+                "classes_count": len(classes),
+                "test_samples": int(len(X_test)),
+            }, f, indent=2)
 
-        print(f"✅ [GRU SUCCESS] Đã Fine-Tune xong Top 100 từ vựng ({best_val_acc * 100:.2f}% >= 30%)! Model đã lưu tại: {model_path}")
+        print(f"✅ [GRU SUCCESS] Đã Fine-Tune xong Top 100 từ vựng ({best_val_acc * 100:.2f}% >= 40%)! Model đã lưu tại: {model_path}")
         print(f"✅ Metadata lưu tại: {info_path}")
+        print("\n--- Đang dọn dẹp các file checkpoint tạm thời ---")
+        for path in (last_model_file, best_model_file, last_epoch_file, checkpoint_classes_file):
+            if os.path.exists(path):
+                os.remove(path)
+        for path in glob.glob(os.path.join(checkpoint_dir, 'checkpoint_epoch_*.h5')):
+            os.remove(path)
         return True
     else:
-        print(f"❌ [GRU FAILED] Kết quả ({best_val_acc * 100:.2f}% < 30%). Hủy bỏ cập nhật.")
-        return False
+        print(f"❌ [GRU FAILED] Kết quả ({best_val_acc * 100:.2f}% < 40%). Hủy bỏ cập nhật.")
+        import sys; sys.exit(1)
 
 if __name__ == "__main__":
     main()

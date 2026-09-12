@@ -1,9 +1,9 @@
-# SIGN_LANGUAGE_MARKET_READY/data_preparation/prepare_detection.py
-import os
+﻿import os
 import cv2
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import sys
+import glob
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import config
@@ -11,12 +11,9 @@ import config
 try:
     from mediapipe.python.solutions import hands as mp_hands
 except ImportError:
-    print("Đang cài đặt thư viện MediaPipe để tạo nhãn tự động...")
-    os.system("pip install mediapipe opencv-python")
-    from mediapipe.python.solutions import hands as mp_hands
+    raise RuntimeError("Thiếu MediaPipe. Hãy chạy: python -m pip install -r requirements.txt")
 
 def get_hand_bounding_box(image_path, hands_detector):
-    """Sử dụng MediaPipe để tìm khung bao quanh bàn tay trong ảnh."""
     img = cv2.imread(image_path)
     if img is None:
         return None
@@ -31,7 +28,6 @@ def get_hand_bounding_box(image_path, hands_detector):
     x_min, y_min = w, h
     x_max, y_max = 0, 0
     
-    # Lấy tọa độ nhỏ nhất và lớn nhất của các khớp tay
     for hand_landmarks in results.multi_hand_landmarks:
         for landmark in hand_landmarks.landmark:
             x, y = int(landmark.x * w), int(landmark.y * h)
@@ -40,7 +36,6 @@ def get_hand_bounding_box(image_path, hands_detector):
             if x > x_max: x_max = x
             if y > y_max: y_max = y
             
-    # Thêm một chút lề (padding) 5% để khung không bị quá sát tay
     pad_x = int(w * 0.05)
     pad_y = int(h * 0.05)
     
@@ -49,27 +44,31 @@ def get_hand_bounding_box(image_path, hands_detector):
     x_max = min(w, x_max + pad_x)
     y_max = min(h, y_max + pad_y)
     
-    # Chuyển đổi sang định dạng YOLO: x_center, y_center, width, height (chuẩn hóa 0->1)
     box_w = (x_max - x_min) / w
     box_h = (y_max - y_min) / h
     x_center = (x_min + x_max) / 2.0 / w
     y_center = (y_min + y_max) / 2.0 / h
     
-    # 0 là ID của class 'hand'
     return f"0 {x_center:.6f} {y_center:.6f} {box_w:.6f} {box_h:.6f}"
 
 def main():
     print("=== DYNAMIC UNIVERSAL HAND DETECTION ADAPTER ===")
     det_dir = config.DETECTION_DIR
 
-    # KỊCH BẢN A: Đã có sẵn tập dữ liệu gán nhãn chuẩn từ Roboflow / Kaggle (train/ và data.yaml)
     if os.path.exists(os.path.join(det_dir, 'train')) and os.path.exists(os.path.join(det_dir, 'data.yaml')):
         print("🟢 [ADAPTER] Phát hiện tập dữ liệu Roboflow/YOLO đã gán nhãn chuẩn!")
-        import glob
+        train_cnt = len(glob.glob(os.path.join(det_dir, 'train', 'images', '*.*')))
+        val_dir = 'valid' if os.path.isdir(os.path.join(det_dir, 'valid')) else 'val'
+        val_cnt = len(glob.glob(os.path.join(det_dir, val_dir, 'images', '*.*')))
+        print(f"✅ Giữ nguyên dataset và split gốc: Train={train_cnt}, Val={val_cnt}")
+        print("🚀 Khởi chạy train: python Cloud_server/Trainer/train_scripts/train_yolo.py")
+        return
+
+        # Legacy migration retained below for reference, but intentionally
+        # unreachable: preparation must not move test data or rewrite labels.
         import shutil
         import yaml
 
-        # 1. Gộp tập test (nếu có) vào valid để giữ tỷ lệ 80/20 chuẩn
         test_img_dir = os.path.join(det_dir, 'test', 'images')
         test_lbl_dir = os.path.join(det_dir, 'test', 'labels')
         valid_img_dir = os.path.join(det_dir, 'valid', 'images')
@@ -85,7 +84,6 @@ def main():
                 shutil.move(lbl, os.path.join(valid_lbl_dir, os.path.basename(lbl)))
             shutil.rmtree(os.path.join(det_dir, 'test'), ignore_errors=True)
 
-        # 2. Chuẩn hóa nhãn Single-Class ('hand' class 0)
         txt_files = glob.glob(os.path.join(det_dir, '**', 'labels', '*.txt'), recursive=True)
         for tf in txt_files:
             with open(tf, 'r') as f:
@@ -99,7 +97,6 @@ def main():
             with open(tf, 'w') as f:
                 f.writelines(new_lines)
 
-        # 3. Cập nhật data.yaml
         yaml_path = os.path.join(det_dir, 'data.yaml')
         yaml_data = {
             'path': det_dir,
@@ -117,7 +114,6 @@ def main():
         print("🚀 Khởi chạy train: python Cloud_server/Trainer/train_scripts/train_yolo.py")
         return
 
-    # KỊCH BẢN B: Dữ liệu ảnh thô mới chưa gán nhãn + CSV mới bất kỳ
     print("🟡 [ADAPTER] Quét tự động dữ liệu thô mới trong thư mục Detection...")
     csv_files = glob.glob(os.path.join(det_dir, "*.csv"))
     if not csv_files:
@@ -128,19 +124,20 @@ def main():
     print(f"📂 [ADAPTER] Tự động đọc file nhãn thô mới: {os.path.basename(detection_csv)}")
     hands_detector = mp_hands.Hands(static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3)
     df = pd.read_csv(detection_csv)
-    print(f"Tổng số dòng trong CSV: {len(df)}")
+    
+    if 'imageName' not in df.columns:
+        print("Lỗi: Không tìm thấy cột 'imageName' trong file CSV!")
+        return
 
-    # Loại bỏ dòng trùng ảnh
     df_unique = df.drop_duplicates(subset=['imageName'])
-    print(f"Số ảnh duy nhất: {len(df_unique)}")
-
-    # Chia train/val theo id người dùng (80/20)
-    unique_ids = df_unique['id'].unique()
-    train_ids, val_ids = train_test_split(unique_ids, train_size=0.8, random_state=42)
-
-    train_df = df_unique[df_unique['id'].isin(train_ids)]
-    val_df = df_unique[df_unique['id'].isin(val_ids)]
-    print(f"Train dự kiến: {len(train_df)} ảnh | Val dự kiến: {len(val_df)} ảnh")
+    
+    if 'id' in df_unique.columns:
+        unique_ids = df_unique['id'].unique()
+        train_ids, val_ids = train_test_split(unique_ids, train_size=0.8, random_state=42)
+        train_df = df_unique[df_unique['id'].isin(train_ids)]
+        val_df = df_unique[df_unique['id'].isin(val_ids)]
+    else:
+        train_df, val_df = train_test_split(df_unique, train_size=0.8, random_state=42)
 
     def process_and_write(dataframe, output_path):
         lines = []
@@ -156,53 +153,38 @@ def main():
             if count % 500 == 0:
                 print(f"  Đã xử lý {count}/{total} ảnh...")
                 
-            img_path = os.path.join(config.DETECTION_IMAGES_DIR, row['imageName'])
+            img_name = row['imageName']
+            img_path = os.path.join(config.CLASSIFICATION_IMAGES_DIR, img_name) # Sửa dùng nguồn ảnh cũ
             
             if not os.path.exists(img_path):
                 missing += 1
                 continue
                 
-            # Dùng AI sinh nhãn tự động
             yolo_bbox = get_hand_bounding_box(img_path, hands_detector)
             if yolo_bbox is None:
                 no_hands += 1
-                continue # Bỏ qua ảnh này vì không thấy tay
+                continue
                 
-            # Lưu file .txt nhãn nằm cùng thư mục với ảnh
             txt_path = img_path.rsplit('.', 1)[0] + '.txt'
             with open(txt_path, 'w', encoding='utf-8') as f:
                 f.write(yolo_bbox + '\n')
                 
-            # LƯU Ý QUAN TRỌNG: Chỉ ghi đường dẫn ảnh, XÓA BỎ SỐ 0 ở cuối
             lines.append(f"{os.path.abspath(img_path)}\n")
             
         with open(output_path, 'w', encoding='utf-8') as f:
             f.writelines(lines)
             
         print(f"-> Hoàn tất ghi {len(lines)} dòng vào {output_path}")
-        print(f"   (Bỏ qua do thiếu ảnh: {missing} | Bỏ qua do AI không nhận diện được tay: {no_hands})")
 
-    # Ghi file danh sách và sinh file txt
     process_and_write(train_df, os.path.join(config.DETECTION_DIR, 'train.txt'))
     process_and_write(val_df, os.path.join(config.DETECTION_DIR, 'val.txt'))
 
-    # Tạo file data.yaml cho YOLO
-    yaml_content = f"""
-path: {config.DETECTION_DIR}
-train: train.txt
-val: val.txt
-nc: 1
-names: ['hand']
-"""
+    yaml_content = f"path: {config.DETECTION_DIR}\ntrain: train.txt\nval: val.txt\nnc: 1\nnames: ['hand']\n"
     with open(os.path.join(config.DETECTION_DIR, 'data.yaml'), 'w', encoding='utf-8') as f:
         f.write(yaml_content)
 
     print("\n✅ Hoàn tất chuẩn bị dữ liệu và sinh nhãn tự động!")
-    print(f"   - File train.txt: {os.path.join(config.DETECTION_DIR, 'train.txt')}")
-    print(f"   - File val.txt: {os.path.join(config.DETECTION_DIR, 'val.txt')}")
-    print(f"   - File data.yaml: {os.path.join(config.DETECTION_DIR, 'data.yaml')}")
-    
     hands_detector.close()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

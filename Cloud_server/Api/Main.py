@@ -123,3 +123,8 @@ async def websocket_endpoint(websocket: WebSocket):
         print("[WebSocket] Client đã ngắt kết nối cuộc gọi/livestream.")
     except Exception as e:
         print(f"[WebSocket Error] Có lỗi xảy ra: {e}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("Cloud_server.Api.Main:app", host="127.0.0.1", port=8000)

@@ -44,6 +44,9 @@ class LLMCorrector:
             self.enabled = False
 
     def _try_google(self):
+        if not config.LLM_API_KEY:
+            print("Chưa cấu hình GEMINI_API_KEY; bỏ qua Gemini.")
+            return False
         try:
             from google import genai
             from google.genai import types
@@ -74,36 +77,37 @@ class LLMCorrector:
             print(f"Ollama khởi tạo lỗi: {e}")
         return False
 
-    def correct(self, text):
-        if (
-            not self.enabled or not text
-        ):  # Nếu tính năng sửa lỗi bị tắt hoặc văn bản trống, trả về nguyên văn bản gốc mà không gọi LLM để api không tốn tiền và thời gian xử lý không cần thiết, đồng thời tránh lỗi khi gửi yêu cầu trống đến LLM. Đây là một biện pháp phòng ngừa để đảm bảo ứng dụng vẫn hoạt động ổn định ngay cả khi LLM gặp sự cố hoặc không được cấu hình đúng.
+    def correct(self, text, history_context=None):
+        if not self.enabled or not text:
             return text
         try:
+            # Nếu có ngữ cảnh, bổ sung vào đầu để AI hiểu mạch hội thoại
+            prompt_text = text
+            if history_context:
+                prompt_text = f"Ngữ cảnh các câu trước đó: {history_context}\nDựa vào ngữ cảnh trên, hãy dịch từ/câu sau sao cho logic và tự nhiên nhất: {text}"
+                
             if self.provider == "google":
                 response = self.client.models.generate_content(
                     model=self.model,
-                    contents=text,
+                    contents=prompt_text,
                     config=self.genai_types.GenerateContentConfig(
                         system_instruction=LLM_SYSTEM_PROMPT,
-                        temperature=0.1,  # Giữ độ chính xác cao, giảm khả năng LLM tạo ra các sửa lỗi không cần thiết hoặc sai lệch , không cần sáng tạo
-                        max_output_tokens=50,  # Giới hạn số token trả về để tránh chi phí và thời gian xử lý không cần thiết, đồng thời đảm bảo LLM tập trung vào việc sửa lỗi ngắn gọn thay vì tạo ra các phản hồi dài dòng hoặc giải thích thêm. Với bài nhận diện từ ngữ pháp thủ ngữ, thường chỉ cần một từ hoặc cụm từ ngắn để sửa lỗi, nên 50 token là đủ cho hầu hết trường hợp.
+                        temperature=0.1,  
+                        max_output_tokens=50,  
                     ),
                 )
                 return response.text.strip()
             elif self.provider == "ollama":
-                # Đang dùng Ollama vì trước đó mất mạng
-                # Thử Google lại xem có mạng chưa
                 if self.client is not None and self._check_google():
                     print("✅ Có mạng trở lại → quay về Google Gemini")
                     self.provider = "google"
-                    return self.correct(text)
-                prompt = f"{LLM_SYSTEM_PROMPT}\n\nInput: {text}\nCorrected:"
+                    return self.correct(text, history_context)
+                prompt = f"{LLM_SYSTEM_PROMPT}\n\nInput: {prompt_text}\nCorrected:"
                 return self.llm.invoke(prompt).strip()
 
         except Exception as e:
             print(f"LLM correction error: {e}")
-            if self.provider == "google" and self._try_ollama():
+            if self.provider == "google":
                 print("Chuyển sang Ollama local nếu có...")
                 if self._try_ollama():
                     self.provider = "ollama"

@@ -32,6 +32,15 @@ VI_DICTIONARY = {
     'room': 'căn phòng', 'score': 'điểm số', 'shirt': 'áo sơ mi', 'short': 'ngắn/thấp',
     'take': 'lấy', 'tall': 'cao', 'thanksgiving': 'lễ tạ ơn', 'thin': 'gầy/mỏng',
     'trade': 'trao đổi', 'what': 'cái gì', 'who': 'ai', 'yes': 'vâng/có',
+    'africa': 'châu Phi', 'all': 'tất cả', 'birthday': 'sinh nhật', 'but': 'nhưng',
+    'can': 'có thể', 'chair': 'cái ghế', 'city': 'thành phố', 'clothes': 'quần áo',
+    'color': 'màu sắc', 'cook': 'nấu ăn', 'cow': 'con bò', 'decide': 'quyết định',
+    'enjoy': 'thích thú', 'finish': 'hoàn thành', 'forget': 'quên', 'hat': 'cái mũ',
+    'hearing': 'thính giác', 'jacket': 'áo khoác', 'medicine': 'thuốc', 'meet': 'gặp',
+    'now': 'bây giờ', 'paint': 'sơn/vẽ', 'paper': 'giấy', 'pull': 'kéo',
+    'right': 'đúng/bên phải', 'same': 'giống nhau', 'secretary': 'thư ký',
+    'table': 'cái bàn', 'tell': 'kể/nói', 'thursday': 'thứ năm',
+    'wrong': 'sai', 'year': 'năm',
 
     # --- 2. CHÀO HỎI & GIAO TIẾP HÀNG NGÀY ---
     'hello': 'xin chào', 'hi': 'chào bạn', 'hey': 'này bạn', 'goodbye': 'tạm biệt',
@@ -102,23 +111,41 @@ KO_DICTIONARY = {
 }
 
 
+from collections import deque
+
 class ContextAgent:
     def __init__(self, llm_corrector=None):
+        import config
         self.llm_corrector = llm_corrector
+        self.history = deque(maxlen=getattr(config, 'CONTEXT_WINDOW_SIZE', 7))
 
     def _merge_fingerspelling(self, raw_tokens):
         """
-        Tự động ghép các chữ cái rời (fingerspelling) thành từ hoàn chỉnh:
-        Ví dụ: ['H', 'E', 'L', 'L', 'O'] -> ['hello']
-        Ví dụ: ['A', 'P', 'P', 'L', 'E', 'mother'] -> ['apple', 'mother']
+        Tự động ghép các chữ cái rời (fingerspelling) thành từ hoàn chỉnh và xử lý ngắt chữ:
+        - 'space' -> tạo khoảng trắng ngăn cách giữa các từ
+        - 'del'   -> xóa ký tự trước đó
+        - ['H', 'E', 'L', 'L', 'O', 'space', 'W', 'O', 'R', 'L', 'D'] -> ['hello', 'world']
+        - ['A', 'P', 'P', 'L', 'E', 'mother'] -> ['apple', 'mother']
         """
         merged_tokens = []
         char_buf = []
 
         for token in raw_tokens:
             token_clean = token.strip()
-            # Nếu là 1 ký tự chữ cái đơn lẻ
-            if len(token_clean) == 1 and token_clean.isalpha():
+            tok_lower = token_clean.lower()
+
+            if tok_lower == 'space':
+                if char_buf:
+                    merged_tokens.append("".join(char_buf).lower())
+                    char_buf = []
+            elif tok_lower == 'del':
+                if char_buf:
+                    char_buf.pop()
+                elif merged_tokens:
+                    merged_tokens.pop()
+            elif tok_lower in ('nothing', ''):
+                continue
+            elif len(token_clean) == 1 and token_clean.isalpha():
                 char_buf.append(token_clean)
             else:
                 if char_buf:
@@ -139,12 +166,17 @@ class ContextAgent:
         import config
 
         # 1. Nếu đầu vào là một từ vựng đơn lẻ có sẵn trong từ điển (ví dụ: "apple", "mother", "bye")
-        dict_obj = VI_DICTIONARY if target_lang == 'vi' else \
-                   (JA_DICTIONARY if target_lang == 'ja' else (KO_DICTIONARY if target_lang == 'ko' else VI_DICTIONARY))
+        dictionaries = {'vi': VI_DICTIONARY, 'ja': JA_DICTIONARY, 'ko': KO_DICTIONARY}
+        dict_obj = dictionaries.get(target_lang)
         
         clean_word = action_word.strip().lower()
-        if clean_word in dict_obj:
-            return dict_obj[clean_word]
+        if dict_obj and clean_word in dict_obj:
+            translated = dict_obj[clean_word]
+            self.history.append(translated)
+            return translated
+        if target_lang == 'en' and " " not in clean_word:
+            self.history.append(clean_word)
+            return clean_word
 
         # 2. Xử lý chuỗi nhiều từ hoặc chữ cái đánh vần (Fingerspelling)
         raw_tokens = action_word.split()
@@ -178,16 +210,21 @@ class ContextAgent:
                 translated_words.append(w.upper() if len(w) == 1 else w)
 
         final_str = " ".join(translated_words)
+        
+        # Tạo chuỗi history
+        history_context = " | ".join(self.history) if self.history else None
 
         # Chỉ gọi LLM khi API Key hợp lệ (không phải key mẫu "AIzaSy...")
         api_key = getattr(config, 'LLM_API_KEY', '')
         if self.llm_corrector and hasattr(self.llm_corrector, 'correct') and api_key and not api_key.startswith("AIzaSy..."):
             try:
-                llm_out = self.llm_corrector.correct(final_str)
+                llm_out = self.llm_corrector.correct(final_str, history_context=history_context)
                 if llm_out:
+                    self.history.append(llm_out)
                     return llm_out
             except Exception:
                 pass
 
+        if final_str:
+            self.history.append(final_str)
         return final_str # Trả về bản dịch mượt mà & chính xác!
-

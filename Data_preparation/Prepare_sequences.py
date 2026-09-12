@@ -1,254 +1,236 @@
-# SIGN_LANGUAGE_MARKET_READY/data_preparation/Prepare_sequences.py
-import os
-import cv2
-from mediapipe.python.solutions import hands as mp_hands
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import train_test_split
-from tqdm import tqdm
+"""Build correctly labelled GRU sequences from WLASL metadata.
+
+Numeric MP4 names are video IDs, not labels. This script resolves every ID
+through ``nslt_100.json`` and ``wlasl_class_list.txt`` and preserves the
+official train/val/test split.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from collections import Counter, defaultdict
+from pathlib import Path
+
+import cv2
+import numpy as np
+from tqdm import tqdm
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import config
+from Shared_lib.sequence_utils import DEFAULT_SEQUENCE_LENGTH, landmarks_to_vector
 
-def extract_keypoints(video_path, hands, seq_len=30):
-    """Trích xuất chuỗi keypoints từ video — 2 tay, phân biệt trái/phải."""
-    NUM_POINTS = 21 * 3             # 63 số/tay
-    TOTAL_FEATURES = NUM_POINTS * 2  # 126 số = 2 tay
-    
-    cap = cv2.VideoCapture(video_path)
-    kp_seq = []
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = hands.process(frame_rgb)
-        
-        # Tạo vector 126 số: [tay_trái (63) | tay_phải (63)], mặc định = 0
-        kp = [0.0] * TOTAL_FEATURES
-        
-        if results.multi_hand_landmarks and results.multi_handedness:
-            for idx, hand_landmarks in enumerate(results.multi_hand_landmarks):
-                # Đọc nhãn trái/phải từ MediaPipe
-                label = results.multi_handedness[idx].classification[0].label
-                
-                # "Left" → vị trí 0-62 (63 số đầu)
-                # "Right" → vị trí 63-125 (63 số sau)
-                offset = 0 if label == "Left" else NUM_POINTS
-                
-                for j, lm in enumerate(hand_landmarks.landmark):
-                    kp[offset + j * 3]     = lm.x
-                    kp[offset + j * 3 + 1] = lm.y
-                    kp[offset + j * 3 + 2] = lm.z
-        
-        kp_seq.append(kp)
-    cap.release()
-    
-    if len(kp_seq) == 0:
-        return None
-    
-    seq = np.array(kp_seq, dtype=np.float32)
-    if len(seq) >= seq_len:
-        return seq[:seq_len]
-    else:
-        pad = np.zeros((seq_len - len(seq), TOTAL_FEATURES), dtype=np.float32)
-        return np.vstack([seq, pad])
 
-def process_from_dataset_folder(dataset_dir, hands, seq_len, output_base, processed_ids=None):
-    """Quét dữ liệu trực tiếp từ các thư mục lớp từ vựng (ví dụ: archive/dataset/SL/apple, book...)."""
-    if processed_ids is None:
-        processed_ids = set()
-
-    if not os.path.exists(dataset_dir):
-        print(f"⚠️ Không tìm thấy thư mục dataset: {dataset_dir}")
-        return processed_ids
-
-    print(f"📂 Đang quét dữ liệu từ thư mục: {dataset_dir}")
-    class_names = [d for d in os.listdir(dataset_dir) if os.path.isdir(os.path.join(dataset_dir, d))]
-    print(f"🔍 Phát hiện {len(class_names)} lớp từ vựng.")
-
-    total_train = 0
-    total_val = 0
-
-    for class_name in tqdm(class_names, desc="Xử lý từng lớp từ vựng"):
-        class_path = os.path.join(dataset_dir, class_name)
-        video_files = [f for f in os.listdir(class_path) if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))]
-
-        if not video_files:
-            continue
-
-        # Chia 80% Train, 20% Val cho mỗi lớp từ vựng
-        if len(video_files) > 1:
-            train_vids, val_vids = train_test_split(video_files, train_size=0.8, random_state=42)
-        else:
-            train_vids = video_files
-            val_vids = []
-
-        # Hàm con xử lý danh sách video
-        def process_list(v_list, split_name):
-            count = 0
-            for vid in v_list:
-                vid_id = os.path.splitext(vid)[0]
-                full_id = f"{class_name}_{vid_id}"
-                if full_id in processed_ids:
-                    continue
-
-                # Kiểm tra nếu file .npy đã tồn tại trên ổ đĩa -> Bỏ qua ngay lập tức để chạy tiếp nối!
-                dst_dir = os.path.join(output_base, split_name, class_name)
-                npy_file = os.path.join(dst_dir, f"{vid_id}.npy")
-                if os.path.exists(npy_file):
-                    processed_ids.add(full_id)
-                    continue
-
-                v_path = os.path.join(class_path, vid)
-                try:
-                    seq = extract_keypoints(v_path, hands, seq_len)
-                    if seq is not None:
-                        os.makedirs(dst_dir, exist_ok=True)
-                        np.save(npy_file, seq)
-                        processed_ids.add(full_id)
-                        count += 1
-                except Exception as e:
-                    print(f"⚠️ Bỏ qua video lỗi {v_path}: {e}")
-            return count
-
-        total_train += process_list(train_vids, 'train')
-        total_val += process_list(val_vids, 'val')
-
-    print(f"✅ Hoàn tất trích xuất từ Dataset: Train = {total_train} video, Val = {total_val} video.")
-    return processed_ids
-
-def process_custom_enrollment_videos(hands, seq_len, output_base, processed_ids=None):
-    """Tự động quét động thư mục custom_enrollment chứa video mẫu nạp mới của Gia sư AI."""
-    if processed_ids is None:
-        processed_ids = set()
-
-    custom_dir = getattr(config, 'SEQUENCES_CUSTOM_DIR', os.path.join(config.SEQUENCES_DIR, 'custom_enrollment'))
-    if not os.path.exists(custom_dir):
-        return processed_ids
-
-    print(f"\n🎓 [ADAPTER] Đang quét động kho Video Mẫu Gia sư AI: {custom_dir}")
-    custom_words = [d for d in os.listdir(custom_dir) if os.path.isdir(os.path.join(custom_dir, d))]
-
-    for word_name in custom_words:
-        word_path = os.path.join(custom_dir, word_name)
-        v_files = [f for f in os.listdir(word_path) if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))]
-        for vid in v_files:
-            vid_id = os.path.splitext(vid)[0]
-            if vid_id in processed_ids:
+def load_class_list(path: Path) -> dict[int, str]:
+    classes: dict[int, str] = {}
+    with path.open("r", encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            line = line.strip()
+            if not line:
                 continue
-
-            v_path = os.path.join(word_path, vid)
-            dst_dir = os.path.join(output_base, 'train', word_name)
-            npy_file = os.path.join(dst_dir, f"{vid_id}.npy")
-            if os.path.exists(npy_file):
-                processed_ids.add(vid_id)
-                continue
-
             try:
-                seq = extract_keypoints(v_path, hands, seq_len)
-                if seq is not None:
-                    os.makedirs(dst_dir, exist_ok=True)
-                    np.save(npy_file, seq)
-                    processed_ids.add(vid_id)
-                    print(f"  ✅ Đã trích xuất nạp bổ sung Video Mẫu: '{word_name}' -> {vid_id}.npy")
-            except Exception as e:
-                print(f"  ⚠️ Bỏ qua video lỗi {v_path}: {e}")
+                class_id, gloss = line.split("\t", 1)
+                classes[int(class_id)] = gloss.strip()
+            except ValueError as exc:
+                raise ValueError(f"Invalid class-list line {line_number}: {line!r}") from exc
+    return classes
 
-    return processed_ids
+
+def load_wlasl_records(metadata_path: Path, class_list_path: Path, videos_dir: Path):
+    with metadata_path.open("r", encoding="utf-8") as stream:
+        metadata = json.load(stream)
+    class_names = load_class_list(class_list_path)
+    records, invalid = [], []
+    for video_id, item in metadata.items():
+        try:
+            class_id, frame_start, frame_end = item["action"]
+            gloss = class_names[int(class_id)]
+            split = item["subset"]
+            if split not in {"train", "val", "test"}:
+                raise ValueError(f"unknown split {split!r}")
+        except (KeyError, TypeError, ValueError) as exc:
+            invalid.append((video_id, str(exc)))
+            continue
+        video_path = videos_dir / f"{video_id}.mp4"
+        records.append({
+            "video_id": video_id,
+            "video_path": video_path,
+            "gloss": gloss,
+            "class_id": int(class_id),
+            "split": split,
+            "frame_start": int(frame_start),
+            "frame_end": int(frame_end),
+            "available": video_path.is_file(),
+        })
+    return records, invalid
+
+
+def print_audit(records, invalid, metadata_path: Path) -> dict:
+    available = [record for record in records if record["available"]]
+    split_counts = Counter(record["split"] for record in available)
+    class_split_counts = defaultdict(Counter)
+    for record in available:
+        class_split_counts[record["gloss"]][record["split"]] += 1
+    summary = {
+        "metadata": str(metadata_path),
+        "metadata_records": len(records) + len(invalid),
+        "valid_records": len(records),
+        "available_videos": len(available),
+        "missing_videos": sum(not record["available"] for record in records),
+        "available_classes": len(class_split_counts),
+        "split_counts": dict(split_counts),
+        "classes_without_train": sorted(
+            name for name, counts in class_split_counts.items() if not counts["train"]
+        ),
+        "classes_without_val": sorted(
+            name for name, counts in class_split_counts.items() if not counts["val"]
+        ),
+        "invalid_records": invalid,
+    }
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return summary
+
+
+def frame_indices(total_frames: int, frame_start: int, frame_end: int, length: int):
+    """Return evenly spaced zero-based indices inside the annotated range."""
+    if total_frames <= 0:
+        return []
+    start = max(0, frame_start - 1)
+    end = total_frames - 1 if frame_end <= 0 else min(total_frames - 1, frame_end - 1)
+    if start > end:
+        # Some processed mirrors are already trimmed and re-encoded.
+        start, end = 0, total_frames - 1
+    return np.linspace(start, end, length).round().astype(int).tolist()
+
+
+def extract_keypoints(video_path: Path, hands, frame_start: int, frame_end: int,
+                      sequence_length: int = DEFAULT_SEQUENCE_LENGTH):
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    indices = frame_indices(
+        int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), frame_start, frame_end, sequence_length
+    )
+    if not indices:
+        cap.release()
+        return None
+
+    # Decode once from left to right. Repeated random seeks are very slow for
+    # inter-frame-compressed MP4 files, especially near the end of long clips.
+    wanted = set(indices)
+    extracted = {}
+    frame_number = 0
+    while frame_number <= max(wanted):
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if frame_number in wanted:
+            result = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            extracted[frame_number] = landmarks_to_vector(
+                result.multi_hand_landmarks, result.multi_handedness
+            )
+        frame_number += 1
+    cap.release()
+    zero = np.zeros(126, dtype=np.float32)
+    sequence = [extracted.get(index, zero) for index in indices]
+    if not sequence or sum(np.any(frame) for frame in sequence) < 5:
+        return None
+    return np.asarray(sequence, dtype=np.float32)
+
+
+def build_dataset(records, output_dir: Path, limit: int | None = None,
+                  overwrite: bool = False) -> dict:
+    from mediapipe.python.solutions import hands as mp_hands
+
+    selected = [record for record in records if record["available"]]
+    if limit is not None:
+        selected = selected[:limit]
+    stats, failures = Counter(), []
+    hands = mp_hands.Hands(
+        static_image_mode=True, max_num_hands=2, min_detection_confidence=0.3
+    )
+    try:
+        for record in tqdm(selected, desc="Extracting WLASL keypoints"):
+            destination = (
+                output_dir / record["split"] / record["gloss"] /
+                f'{record["video_id"]}.npy'
+            )
+            if destination.exists() and not overwrite:
+                try:
+                    existing = np.load(destination, allow_pickle=False)
+                    detected = int(np.count_nonzero(np.any(existing != 0, axis=1)))
+                    if existing.shape == (DEFAULT_SEQUENCE_LENGTH, 126) and detected >= 5:
+                        stats["skipped_existing"] += 1
+                        continue
+                    quarantine = destination.with_suffix('.npy.sparse')
+                    suffix = 1
+                    while quarantine.exists():
+                        quarantine = destination.with_suffix(f'.npy.sparse.{suffix}')
+                        suffix += 1
+                    destination.rename(quarantine)
+                    stats["quarantined_sparse"] += 1
+                except (OSError, ValueError):
+                    quarantine = destination.with_suffix('.npy.invalid')
+                    suffix = 1
+                    while quarantine.exists():
+                        quarantine = destination.with_suffix(f'.npy.invalid.{suffix}')
+                        suffix += 1
+                    destination.rename(quarantine)
+                    stats["quarantined_invalid"] += 1
+            sequence = extract_keypoints(
+                record["video_path"], hands, record["frame_start"], record["frame_end"]
+            )
+            if sequence is None:
+                stats["failed_no_hands"] += 1
+                failures.append(record["video_id"])
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            np.save(destination, sequence)
+            stats[f'written_{record["split"]}'] += 1
+    finally:
+        hands.close()
+    result = dict(stats)
+    result["selected"] = len(selected)
+    result["failed_video_ids"] = failures
+    return result
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--metadata", type=Path, default=Path(config.WLASL_METADATA_PATH))
+    parser.add_argument("--class-list", type=Path, default=Path(config.WLASL_CLASS_LIST_PATH))
+    parser.add_argument("--videos", type=Path, default=Path(config.WLASL_VIDEOS_DIR))
+    parser.add_argument("--output", type=Path, default=Path(config.SEQUENCES_PROCESSED_DIR))
+    parser.add_argument("--dry-run", action="store_true", help="Validate only; write no NPY files")
+    parser.add_argument("--limit", type=int, help="Process only the first N available videos")
+    parser.add_argument("--overwrite", action="store_true")
+    return parser.parse_args()
+
 
 def main():
-    print("=== DYNAMIC UNIVERSAL SEQUENCES ADAPTER ===")
-    
-    hands = mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=2,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
-    SEQ_LEN = 30
-    output_dir = getattr(config, 'SEQUENCES_PROCESSED_DIR', os.path.join(config.SEQUENCES_DIR, 'processed'))
-    os.makedirs(output_dir, exist_ok=True)
-    processed_ids = set()
+    args = parse_args()
+    for required in (args.metadata, args.class_list, args.videos):
+        if not required.exists():
+            raise FileNotFoundError(f"Required WLASL input not found: {required}")
+    records, invalid = load_wlasl_records(args.metadata, args.class_list, args.videos)
+    summary = print_audit(records, invalid, args.metadata)
+    if invalid:
+        raise ValueError(f"Metadata contains {len(invalid)} invalid records")
+    if args.dry_run:
+        return 0
+    args.output.mkdir(parents=True, exist_ok=True)
+    build = build_dataset(records, args.output, args.limit, args.overwrite)
+    manifest_path = args.output / "manifest.json"
+    with manifest_path.open("w", encoding="utf-8") as stream:
+        json.dump({"audit": summary, "build": build}, stream, ensure_ascii=False, indent=2)
+    print(json.dumps(build, ensure_ascii=False, indent=2))
+    print(f"Manifest: {manifest_path}")
+    return 0
 
-    # KỊCH BẢN A: Kiểm tra xem đã có sẵn mảng .npy processed trong train/val chưa
-    train_npy_files = []
-    if os.path.exists(os.path.join(output_dir, 'train')):
-        for root, _, files in os.walk(os.path.join(output_dir, 'train')):
-            for f in files:
-                if f.endswith('.npy'): train_npy_files.append(f)
-
-    if len(train_npy_files) > 0:
-        print(f"🟢 [ADAPTER] Phát hiện dữ liệu mảng NumPy Sequences đã được trích xuất sẵn ({len(train_npy_files)} file .npy)!")
-
-    # 1. Tự động quét bổ sung Video Mẫu mới từ kho Gia sư AI (custom_enrollment)
-    process_custom_enrollment_videos(hands, SEQ_LEN, output_dir, processed_ids)
-
-    # 2. XỬ LÝ NGUỒN DATASET THƯ MỤC LỚP
-    dataset_dir = os.path.join(config.SEQUENCES_DIR, 'archive', 'dataset', 'SL')
-    if not os.path.exists(dataset_dir):
-        # Tự động quét động bất kỳ thư mục con nào chứa video
-        subdirs = [os.path.join(config.SEQUENCES_DIR, d) for d in os.listdir(config.SEQUENCES_DIR) if os.path.isdir(os.path.join(config.SEQUENCES_DIR, d)) and d not in ['processed', 'custom_enrollment']]
-        dataset_dir = subdirs[0] if subdirs else dataset_dir
-
-    if os.path.exists(dataset_dir):
-        process_from_dataset_folder(dataset_dir, hands, SEQ_LEN, output_dir, processed_ids)
-
-    # --- 2. XỬ LÝ NGUỒN CSV BỔ SUNG (nếu có) ---
-    csv_path = getattr(config, 'SEQUENCES_CSV', None)
-    if csv_path and os.path.exists(csv_path) and csv_path.endswith('.csv'):
-        print(f"📂 Xử lý video bổ sung từ CSV: {os.path.basename(csv_path)}...")
-        df = pd.read_csv(csv_path)
-        
-        labels_in_csv = [col for col in df.columns if col != 'set_id']
-        csv_data = []
-        
-        for index, row in df.iterrows():
-            group_id = row['set_id']
-            for label in labels_in_csv:
-                video_rel_path = row[label]
-                if pd.isna(video_rel_path): continue
-                
-                vid_id = f"{group_id}_{os.path.splitext(os.path.basename(str(video_rel_path)))[0]}"
-                if vid_id in processed_ids:
-                    continue
-                
-                v_path = os.path.join(config.SEQUENCES_DIR, str(video_rel_path))
-                if os.path.exists(v_path):
-                    csv_data.append((vid_id, v_path, label, group_id))
-        
-        if csv_data:
-            from sklearn.model_selection import GroupShuffleSplit
-            
-            paths = [item[1] for item in csv_data]
-            lbls = [item[2] for item in csv_data]
-            groups = [item[3] for item in csv_data]
-            
-            gss = GroupShuffleSplit(n_splits=1, train_size=0.8, random_state=42)
-            train_idx, val_idx = next(gss.split(paths, lbls, groups))
-            
-            train_csv = [csv_data[i] for i in train_idx]
-            val_csv = [csv_data[i] for i in val_idx]
-            
-            print(f"✂️ CSV chia theo Group (set_id): Train = {len(train_csv)}, Val = {len(val_csv)}")
-            
-            def process_csv_list(v_list, split_name):
-                for (vid_id, v_path, lbl, _) in tqdm(v_list, desc=f"CSV {split_name}"):
-                    seq = extract_keypoints(v_path, hands, SEQ_LEN)
-                    if seq is not None:
-                        d_dir = os.path.join(output_dir, split_name, str(lbl))
-                        os.makedirs(d_dir, exist_ok=True)
-                        np.save(os.path.join(d_dir, f"{vid_id}.npy"), seq)
-                        processed_ids.add(vid_id)
-            
-            process_csv_list(train_csv, 'train')
-            process_csv_list(val_csv, 'val')
-            print(f"✅ Đã xử lý thêm video từ CSV. (Tổng: {len(processed_ids)})")
-
-    print(f"✅ HOÀN TẤT! Tổng cộng đã xử lý {len(processed_ids)} chuỗi cử chỉ.")
-    print(f"📍 Dữ liệu đích: {output_dir}")
-
-    hands.close()
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

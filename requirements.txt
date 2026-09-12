@@ -1,0 +1,26 @@
+# Runtime and training dependencies (Python 3.11)
+numpy>=1.26,<2.1
+ml-dtypes>=0.4,<0.5
+protobuf>=4.25.3,<5
+opencv-python>=4.8,<6
+tensorflow>=2.18,<2.19
+tf-keras>=2.18,<2.19
+mediapipe>=0.10.14,<0.11
+Pillow>=10,<13
+pandas>=2,<3
+scikit-learn>=1.4,<2
+tqdm>=4.66,<5
+PyYAML>=6,<7
+ultralytics>=8.3,<9
+torch>=2.2,<3
+
+# API, language and desktop features
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+google-genai>=1,<2
+google-api-core>=2.20,<2.30
+grpcio-status>=1.62,<1.63
+requests>=2.31,<3
+pyttsx3>=2.90,<3
+pyvirtualcam>=0.11,<1
+SpeechRecognition>=3.10,<4

@@ -1,0 +1,6 @@
+{
+  "val_accuracy": 0.47072070837020874,
+  "test_accuracy": 0.38795986771583557,
+  "classes_count": 302,
+  "test_samples": 299
+}
